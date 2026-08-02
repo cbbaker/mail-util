@@ -90,13 +90,24 @@ buffer:
 | `a` / `r` / `u` | approve / reject / unset the cluster at point |
 | `A` | approve all high-confidence clusters |
 | `TAB` | toggle sample senders/subjects |
+| `P` | build a plan from the approved clusters (or all, if none marked) |
 | `g` | re-run analysis (keeps your marks by cluster key) |
 | `x` | export the approved clusters to JSON |
 | `q` | quit |
 
-Applying (creating folders and moving mail) is not in the CLI yet; today the workflow is
-review + export. The exported JSON records the approved destinations and message UIDs and
-is the seed for the forthcoming `plan`/`apply` commands.
+`P` opens a `*mail-util-plan*` buffer showing the folders to create and the generated
+Sieve script. There:
+
+| key | action |
+|-----|--------|
+| `v` | verify the plan against the current cache (resolve every action) |
+| `w` | write the Sieve script to a file |
+| `s` | save the plan JSON to a file |
+| `q` | quit |
+
+Applying (creating folders and moving mail) is not in the CLI yet, so the plan buffer is
+review-only: inspect the folders and Sieve, verify it, and save the pieces. Executing the
+plan arrives with the `apply` command.
 
 ## Key design invariant
 

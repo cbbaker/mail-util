@@ -5,4 +5,8 @@
 # Local agent/session transcripts — may contain private mail config; never publish.
 /.agent-shell/
 
+# Stray plan / approved-clusters exports written into the repo dir while testing.
+# These derive from private mail; keep them out of the repo.
+/*.json
+
 
