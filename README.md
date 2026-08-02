@@ -10,11 +10,13 @@ See `DESIGN.md` for the full design and the milestone roadmap.
 
 ## Status
 
-**M1 (read-only vertical slice) — done.** Scans the Maildir, clusters the inbox, and
-prints ranked folder/rule suggestions as JSON. Zero mutation.
+**M1–M2 done, all read-only (zero mutation).** The tool scans the Maildir, clusters the
+inbox, and produces ranked suggestions (`suggest`), a complete sorting plan with
+per-message move actions + a generated Sieve script (`plan`), and a preflight check of a
+plan against the current cache (`verify`). An Emacs review UI drives `suggest`.
 
-Remaining milestones: M2 plan+sieve (pure), M3 journal/apply safety machinery, M4
-server-side IMAP mover (default), M5 offline local mover, M6 Emacs UI + ManageSieve.
+Remaining milestones: M3 journal/apply safety machinery, M4 server-side IMAP mover
+(default), M5 offline local mover, M6 Emacs apply UI + ManageSieve deployment.
 
 ## Workspace layout
 
@@ -24,7 +26,9 @@ server-side IMAP mover (default), M5 offline local mover, M6 Emacs UI + ManageSi
 | `crates/mailcache` | read-only Maildir access: native `,U=` filename parse/emit, `.uidvalidity`, streaming header extraction, folder scanning |
 | `crates/mockcache` | test-only builder that writes a real temp Maildir tree (native filenames, nested folders, `.uidvalidity`) |
 | `crates/suggest` | deterministic clustering (List-Id > sender-domain > person), scoring, taxonomy reuse, human-readable slug generation |
-| `bin/mail-util` | CLI (`scan`, `suggest`) emitting JSON on stdout |
+| `crates/namemap` | maps a folder among its local dotpath, IMAP name, and Sieve target (separator-parameterized) |
+| `crates/sieve` | renders sorting rules to a Sieve script and merges them into an existing user script |
+| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`) emitting JSON on stdout |
 
 ## Build & test
 
@@ -48,10 +52,21 @@ mail-util scan --folder .INBOX
 
 # Ranked sorting suggestions for the inbox.
 mail-util suggest --min-count 30 | jq '.clusters[] | {count, signal, destination}'
+
+# A complete sorting plan: folders to create, per-message move actions, sieve script.
+mail-util plan --min-count 30 > plan.json
+jq '.sieve_text' -r plan.json          # the generated Sieve rules
+jq '.folders_to_create' plan.json
+
+# Restrict a plan to clusters you approved in the Emacs UI (its JSON export).
+mail-util plan --approved approved.json > plan.json
+
+# Preflight: re-check the plan against the current cache (read-only).
+mail-util verify --plan plan.json      # -> { ok, resolved, unresolved, … }
 ```
 
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
-`--inbox <dotpath>` for other layouts.
+`--inbox <dotpath>` for other layouts. `plan` mutates nothing — it only emits JSON.
 
 ## Emacs
 

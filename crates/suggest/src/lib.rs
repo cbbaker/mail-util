@@ -45,7 +45,10 @@ struct Bucket {
 
 /// Choose the clustering key for a message: List-Id > sender-domain > person-address.
 /// Returns `(signal, key)` or `None` if the message has no usable signal.
-fn classify(m: &Message) -> Option<(Signal, String)> {
+///
+/// Public so the `plan` command can assign each message (including uid-less ones) to the
+/// cluster that motivates its move, using exactly the engine's own clustering rule.
+pub fn classify(m: &Message) -> Option<(Signal, String)> {
     if let Some(lid) = &m.headers.list_id {
         return Some((Signal::ListId, lid.clone()));
     }

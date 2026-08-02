@@ -93,7 +93,8 @@ Planned: `namemap`, `sieve`, `mover`, `journal`, and an Emacs front-end.
 ## Milestones
 
 1. **M1 — read-only slice (done):** scan + suggest as JSON.
-2. **M2 — pure plan + Sieve generation, folder-name mapping.**
+2. **M2 — pure plan + Sieve generation, folder-name mapping (done):** `plan`/`verify`
+   commands, `namemap` and `sieve` crates.
 3. **M3 — journal/apply safety machinery + no-loss property tests.**
 4. **M4 — server-side IMAP mover (default) + mbsync reconcile.**
 5. **M5 — offline local mover.**

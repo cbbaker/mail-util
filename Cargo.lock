@@ -223,10 +223,14 @@ dependencies = [
  "anyhow",
  "clap",
  "mailcache",
+ "mockcache",
  "model",
+ "namemap",
  "serde",
  "serde_json",
+ "sieve",
  "suggest",
+ "tempfile",
 ]
 
 [[package]]
@@ -261,6 +265,10 @@ version = "0.1.0"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "namemap"
+version = "0.1.0"
 
 [[package]]
 name = "once_cell"
@@ -361,6 +369,13 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "sieve"
+version = "0.1.0"
+dependencies = [
+ "model",
 ]
 
 [[package]]
