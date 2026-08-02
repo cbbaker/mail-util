@@ -475,26 +475,35 @@ cluster.  Run from the review buffer."
 
 ;;;; Major mode & entry point
 
-(defvar-keymap mail-util-review-mode-map
-  :doc "Keymap for `mail-util-review-mode'."
-  "n" #'mail-util-next
-  "p" #'mail-util-previous
-  "a" #'mail-util-approve
-  "r" #'mail-util-reject
-  "u" #'mail-util-unset
-  "A" #'mail-util-approve-all-high
-  "TAB" #'mail-util-toggle-details
-  "g" #'mail-util-refresh
-  "P" #'mail-util-build-plan
-  "x" #'mail-util-export-approved
-  "q" #'quit-window)
+(defvar mail-util-review-mode-map (make-sparse-keymap)
+  "Keymap for `mail-util-review-mode'.")
 
-(defvar-keymap mail-util-plan-mode-map
-  :doc "Keymap for `mail-util-plan-mode'."
-  "v" #'mail-util-verify
-  "w" #'mail-util-write-sieve
-  "s" #'mail-util-save-plan
-  "q" #'quit-window)
+(defvar mail-util-plan-mode-map (make-sparse-keymap)
+  "Keymap for `mail-util-plan-mode'.")
+
+;; Bind keys imperatively (not via `defvar-keymap', which — like `defvar' — only
+;; assigns when unbound) so re-loading this file updates the bindings on the existing
+;; keymap objects, and therefore in any already-open review/plan buffers.
+(pcase-dolist (`(,key . ,cmd)
+               '(("n" . mail-util-next)
+                 ("p" . mail-util-previous)
+                 ("a" . mail-util-approve)
+                 ("r" . mail-util-reject)
+                 ("u" . mail-util-unset)
+                 ("A" . mail-util-approve-all-high)
+                 ("TAB" . mail-util-toggle-details)
+                 ("P" . mail-util-build-plan)
+                 ("g" . mail-util-refresh)
+                 ("x" . mail-util-export-approved)
+                 ("q" . quit-window)))
+  (keymap-set mail-util-review-mode-map key cmd))
+
+(pcase-dolist (`(,key . ,cmd)
+               '(("v" . mail-util-verify)
+                 ("w" . mail-util-write-sieve)
+                 ("s" . mail-util-save-plan)
+                 ("q" . quit-window)))
+  (keymap-set mail-util-plan-mode-map key cmd))
 
 (define-derived-mode mail-util-plan-mode special-mode "mail-util-plan"
   "Major mode for viewing a mail-util sorting plan."
