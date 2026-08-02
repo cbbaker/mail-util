@@ -9,6 +9,7 @@ members = [
     "crates/sieve",
     "crates/mover",
     "crates/journal",
+    "crates/imapmover",
     "bin/mail-util",
 ]
 
@@ -35,3 +36,4 @@ namemap = { path = "crates/namemap" }
 sieve = { path = "crates/sieve" }
 mover = { path = "crates/mover" }
 journal = { path = "crates/journal" }
+imapmover = { path = "crates/imapmover" }

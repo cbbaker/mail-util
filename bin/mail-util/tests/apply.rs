@@ -85,7 +85,9 @@ fn refuses_real_apply_without_yes() {
 }
 
 #[test]
-fn real_apply_is_gated_until_mover_exists() {
+fn real_apply_requires_imap_host() {
+    // With --yes but no server to talk to, a real IMAP apply must refuse rather than
+    // guess — it never touches mail without an explicit target.
     let mc = build_mock();
     let plan = plan_file(&mc);
     let out = Command::new(BIN)
@@ -96,5 +98,5 @@ fn real_apply_is_gated_until_mover_exists() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("not implemented yet"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--imap-host"));
 }

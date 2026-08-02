@@ -18,7 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use journal::{apply_plan, JournalFile, JournalRecord, RecordSink, Tee};
-use mailcache::{Account, FolderRef};
+use imapmover::{netrc, ImapMover, ImapOps, RealImapOps};
+use mailcache::{Account, FolderRef, UidValidity};
 use model::{
     Cluster, Config, FolderSpec, MoveAction, MoverKind, Plan, Precheck, SieveRule,
 };
@@ -80,10 +81,18 @@ enum Command {
         #[arg(long)]
         plan: PathBuf,
     },
+    /// Read-only IMAP probe: report the server's hierarchy separator and MOVE support.
+    Probe {
+        /// IMAP server hostname (credentials read from ~/.netrc for this machine).
+        #[arg(long)]
+        imap_host: String,
+        #[arg(long, default_value_t = 993)]
+        imap_port: u16,
+    },
     /// Execute a plan (create folders, move mail), journaling every step.
     ///
     /// Streams one JSON journal record per line on stdout. `--dry-run` performs no
-    /// mutation. Real movers arrive in later milestones; today only `--dry-run` runs.
+    /// mutation. A real apply (server-side IMAP moves) needs `--yes` and `--imap-host`.
     Apply {
         /// Path to a plan JSON file produced by `plan`.
         #[arg(long)]
@@ -94,6 +103,17 @@ enum Command {
         /// Required to actually modify mail (ignored for --dry-run).
         #[arg(long)]
         yes: bool,
+        /// IMAP server hostname for a real apply (creds via ~/.netrc).
+        #[arg(long)]
+        imap_host: Option<String>,
+        #[arg(long, default_value_t = 993)]
+        imap_port: u16,
+        /// After the moves, run `mbsync <channel>` to reconcile the local cache.
+        #[arg(long)]
+        mbsync_channel: Option<String>,
+        /// The mbsync executable (default `mbsync`).
+        #[arg(long, default_value = "mbsync")]
+        mbsync_cmd: String,
         /// Journal file (default: ~/.cache/mail-util/journals/<plan_id>.jsonl). If it
         /// already contains records, completed actions are skipped (resume).
         #[arg(long)]
@@ -212,13 +232,97 @@ fn main() -> Result<()> {
             approved,
         } => cmd_plan(&account, &root, inbox, *min_count, (*mover).into(), *separator, approved.as_ref()),
         Command::Verify { plan } => cmd_verify(&account, plan),
+        Command::Probe { imap_host, imap_port } => cmd_probe(imap_host, *imap_port),
         Command::Apply {
             plan,
             dry_run,
             yes,
+            imap_host,
+            imap_port,
+            mbsync_channel,
+            mbsync_cmd,
             journal,
-        } => cmd_apply(plan, *dry_run, *yes, journal.as_ref()),
+        } => cmd_apply(
+            &root,
+            plan,
+            *dry_run,
+            *yes,
+            imap_host.as_deref(),
+            *imap_port,
+            mbsync_channel.as_deref(),
+            mbsync_cmd,
+            journal.as_ref(),
+        ),
     }
+}
+
+/// Connect (read-only) and report the server's hierarchy separator and MOVE capability.
+fn cmd_probe(host: &str, port: u16) -> Result<()> {
+    let auth = netrc::read_default(host)?;
+    eprintln!("connecting to {host}:{port} …");
+    let ops = RealImapOps::connect(host, port, &auth.login, &auth.password)?;
+    #[derive(Serialize)]
+    struct ProbeOut {
+        host: String,
+        port: u16,
+        separator: char,
+        has_move: bool,
+    }
+    let out = ProbeOut {
+        host: host.to_string(),
+        port,
+        separator: ops.delimiter(),
+        has_move: ops.has_move(),
+    };
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+/// Snapshot each folder's UIDVALIDITY so a post-apply check can detect a reset (the
+/// corruption we must never cause).
+fn snapshot_uidvalidity(account: &Account) -> HashMap<String, u64> {
+    let mut map = HashMap::new();
+    for f in account.folders() {
+        if let Ok(Some(uv)) = UidValidity::read_from_folder(&f.dir) {
+            map.insert(f.dotpath, uv.validity);
+        }
+    }
+    map
+}
+
+/// Run `mbsync <channel>` (if given) then assert UIDVALIDITY is unchanged for every
+/// touched folder that existed before — a change means mbsync was forced to resync.
+fn reconcile_local(
+    mbsync_cmd: &str,
+    channel: Option<&str>,
+    account_root: &std::path::Path,
+    touched: &std::collections::BTreeSet<String>,
+    before: &HashMap<String, u64>,
+) -> Result<()> {
+    if let Some(channel) = channel {
+        eprintln!("reconciling: {mbsync_cmd} {channel} …");
+        let status = std::process::Command::new(mbsync_cmd)
+            .arg(channel)
+            .status()
+            .with_context(|| format!("running {mbsync_cmd} {channel}"))?;
+        if !status.success() {
+            anyhow::bail!("{mbsync_cmd} {channel} failed with {status}");
+        }
+    }
+    for dotpath in touched {
+        if let Some(&was) = before.get(dotpath) {
+            let now = UidValidity::read_from_folder(&account_root.join(dotpath))?;
+            if let Some(now) = now {
+                if now.validity != was {
+                    anyhow::bail!(
+                        "UIDVALIDITY changed for {dotpath} ({was} -> {}) — aborting to avoid corruption",
+                        now.validity
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A [`RecordSink`] that streams NDJSON journal records to stdout for Emacs to tail.
@@ -244,13 +348,24 @@ fn default_journal_path(plan_id: &str) -> PathBuf {
         .join(format!("{plan_id}.jsonl"))
 }
 
-fn cmd_apply(plan_path: &PathBuf, dry_run: bool, yes: bool, journal: Option<&PathBuf>) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn cmd_apply(
+    root: &PathBuf,
+    plan_path: &PathBuf,
+    dry_run: bool,
+    yes: bool,
+    imap_host: Option<&str>,
+    imap_port: u16,
+    mbsync_channel: Option<&str>,
+    mbsync_cmd: &str,
+    journal: Option<&PathBuf>,
+) -> Result<()> {
     let text = std::fs::read_to_string(plan_path)
         .with_context(|| format!("reading plan {}", plan_path.display()))?;
     let plan: Plan = serde_json::from_str(&text).context("parsing plan JSON")?;
 
-    // Choose the mover. The real movers arrive in later milestones; until then only a
-    // dry run can execute.
+    // Choose the mover. Dry run touches nothing; a real IMAP apply connects to the
+    // server and moves messages there, then reconciles the local cache.
     let mut mover: Box<dyn Mover> = if dry_run {
         Box::new(DryRunMover)
     } else {
@@ -258,12 +373,34 @@ fn cmd_apply(plan_path: &PathBuf, dry_run: bool, yes: bool, journal: Option<&Pat
             anyhow::bail!("refusing to modify mail without --yes (or use --dry-run)");
         }
         match plan.mover {
-            MoverKind::Imap => anyhow::bail!(
-                "the IMAP mover is not implemented yet (arrives in M4); re-run with --dry-run"
-            ),
             MoverKind::Local => anyhow::bail!(
-                "the local mover is not implemented yet (arrives in M5); re-run with --dry-run"
+                "the local (offline) mover is not implemented yet (arrives in M5); \
+                 re-run with --dry-run or --mover imap"
             ),
+            MoverKind::Imap => {
+                let host = imap_host.ok_or_else(|| {
+                    anyhow::anyhow!("a real IMAP apply needs --imap-host <server>")
+                })?;
+                let auth = netrc::read_default(host)?;
+                eprintln!("connecting to {host}:{imap_port} …");
+                let ops = RealImapOps::connect(host, imap_port, &auth.login, &auth.password)?;
+                let separator = ops.delimiter();
+                eprintln!(
+                    "connected (separator {:?}, server MOVE: {})",
+                    separator,
+                    ops.has_move()
+                );
+                // Snapshot UIDVALIDITY now so reconcile can prove no folder was reset.
+                let account = Account::new(root);
+                let before = snapshot_uidvalidity(&account);
+                let root = root.clone();
+                let channel = mbsync_channel.map(str::to_string);
+                let mbsync_cmd = mbsync_cmd.to_string();
+                let mover = ImapMover::new(ops, separator).with_reconciler(move |touched| {
+                    reconcile_local(&mbsync_cmd, channel.as_deref(), &root, touched, &before)
+                });
+                Box::new(mover)
+            }
         }
     };
 

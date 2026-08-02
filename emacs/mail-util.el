@@ -51,6 +51,19 @@ When nil, the CLI falls back to the MAILUTIL_ROOT environment variable."
   "Default file for `mail-util-export-approved'."
   :type 'file)
 
+(defcustom mail-util-imap-host nil
+  "IMAP server hostname for `mail-util-probe' and a real apply.
+Credentials are read from ~/.netrc for this machine (as mbsync does)."
+  :type '(choice (const :tag "Unset" nil) string))
+
+(defcustom mail-util-imap-port 993
+  "IMAP server port."
+  :type 'natnum)
+
+(defcustom mail-util-mbsync-channel nil
+  "If set, a real apply runs `mbsync <channel>' afterward to reconcile the cache."
+  :type '(choice (const :tag "Don't reconcile" nil) string))
+
 ;;;; Faces
 
 (defface mail-util-approved '((t :inherit success))
@@ -435,7 +448,7 @@ cluster.  Run from the review buffer."
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
       (insert (or (alist-get 'sieve_text plan) ""))
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
-      (insert (propertize "\nkeys: v verify · d dry-run apply · w write sieve · s save plan JSON · q quit\n"
+      (insert (propertize "\nkeys: v verify · d dry-run · X apply-for-real · w write sieve · s save plan JSON · q quit\n"
                           'face 'shadow)))
     (goto-char (point-min))
     (pop-to-buffer (current-buffer))))
@@ -481,6 +494,8 @@ cluster.  Run from the review buffer."
   "List of notable apply events, newest first.")
 (defvar-local mail-util--apply-title nil
   "Title line for the current apply buffer.")
+(defvar-local mail-util--apply-real nil
+  "Non-nil when the current apply buffer is a real (mutating) run.")
 
 (defconst mail-util--apply-buffer "*mail-util-apply*")
 
@@ -526,9 +541,10 @@ line and ON-DONE with (EXIT-STATUS STDERR-BUFFER) when the process finishes."
   (let ((inhibit-read-only t)
         (c mail-util--apply-counts))
     (erase-buffer)
-    (insert (propertize (format "mail-util apply (dry-run) — %s\n"
+    (insert (propertize (format "mail-util apply (%s) — %s\n"
+                                (if mail-util--apply-real "REAL" "dry-run")
                                 (or mail-util--apply-title "…"))
-                        'face 'bold))
+                        'face (if mail-util--apply-real 'error 'bold)))
     (insert (format "folders %d · simulated %d · moved %d · skipped %d · failed %d\n\n"
                     (gethash 'folders c 0) (gethash 'simulated c 0)
                     (gethash 'moved c 0) (gethash 'skipped c 0) (gethash 'failed c 0)))
@@ -568,24 +584,40 @@ line and ON-DONE with (EXIT-STATUS STDERR-BUFFER) when the process finishes."
              mail-util--apply-log)))
     (when render (mail-util--apply-render))))
 
-(defun mail-util-apply-dry-run ()
-  "Dry-run the current plan, streaming journal progress into `*mail-util-apply*'.
-Performs no mutation — it exercises the full apply engine and journal."
-  (interactive)
+(defun mail-util--start-apply (real)
+  "Run apply on the current plan, streaming progress into `*mail-util-apply*'.
+When REAL is non-nil this MOVES MAIL (after confirmation); otherwise it is a
+dry run that mutates nothing."
   (unless mail-util--plan-json (user-error "No plan in this buffer"))
-  (let ((file (make-temp-file "mail-util-plan" nil ".json"))
-        (json mail-util--plan-json)
-        (buf (get-buffer-create mail-util--apply-buffer)))
+  (when real
+    (unless mail-util-imap-host
+      (user-error "Set `mail-util-imap-host' for a real apply"))
+    (let ((n (length (alist-get 'actions mail-util--plan))))
+      (unless (yes-or-no-p
+               (format "REALLY move %d message(s) on %s? " n mail-util-imap-host))
+        (user-error "Aborted"))))
+  (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
+         (json mail-util--plan-json)
+         (buf (get-buffer-create mail-util--apply-buffer))
+         (args (append (list "apply" "--plan" file (if real "--yes" "--dry-run"))
+                       (when real
+                         (append (list "--imap-host" mail-util-imap-host
+                                       "--imap-port" (number-to-string mail-util-imap-port))
+                                 (when mail-util-mbsync-channel
+                                   (list "--mbsync-channel" mail-util-mbsync-channel)))))))
     (with-temp-file file (insert json))
     (with-current-buffer buf
       (mail-util-apply-mode)
       (setq mail-util--apply-counts (make-hash-table :test 'eq)
             mail-util--apply-log nil
-            mail-util--apply-title nil)
-      (let ((inhibit-read-only t)) (erase-buffer) (insert "starting dry-run…\n")))
+            mail-util--apply-title nil
+            mail-util--apply-real real)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (if real "starting REAL apply…\n" "starting dry-run…\n"))))
     (pop-to-buffer buf)
     (mail-util--run-stream
-     (list "apply" "--plan" file "--dry-run")
+     args
      (lambda (rec) (when (buffer-live-p buf)
                      (with-current-buffer buf (mail-util--apply-record rec))))
      (lambda (status stderr-buf)
@@ -598,7 +630,31 @@ Performs no mutation — it exercises the full apply engine and journal."
                    mail-util--apply-log))
            (mail-util--apply-render)))
        (kill-buffer stderr-buf)
-       (message "mail-util apply (dry-run) finished (status %s)" status)))))
+       (message "mail-util apply (%s) finished (status %s)"
+                (if real "REAL" "dry-run") status)))))
+
+(defun mail-util-apply-dry-run ()
+  "Dry-run the current plan (moves nothing)."
+  (interactive)
+  (mail-util--start-apply nil))
+
+(defun mail-util-apply-real ()
+  "Execute the current plan for real: move mail on the server. Prompts first."
+  (interactive)
+  (mail-util--start-apply t))
+
+(defun mail-util-probe ()
+  "Probe the IMAP server for its hierarchy separator and MOVE capability."
+  (interactive)
+  (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
+  (message "mail-util: probing %s …" mail-util-imap-host)
+  (mail-util--run-json
+   (list "probe" "--imap-host" mail-util-imap-host
+         "--imap-port" (number-to-string mail-util-imap-port))
+   (lambda (res)
+     (message "probe %s: separator %S · server MOVE: %s"
+              (alist-get 'host res) (alist-get 'separator res)
+              (if (alist-get 'has_move res) "yes" "no")))))
 
 ;;;; Major mode & entry point
 
@@ -631,6 +687,7 @@ Performs no mutation — it exercises the full apply engine and journal."
 (pcase-dolist (`(,key . ,cmd)
                '(("v" . mail-util-verify)
                  ("d" . mail-util-apply-dry-run)
+                 ("X" . mail-util-apply-real)
                  ("w" . mail-util-write-sieve)
                  ("s" . mail-util-save-plan)
                  ("q" . quit-window)))

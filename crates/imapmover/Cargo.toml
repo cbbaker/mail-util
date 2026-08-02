@@ -1,0 +1,18 @@
+[package]
+name = "imapmover"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+model.workspace = true
+mover.workspace = true
+namemap.workspace = true
+anyhow.workspace = true
+imap = { version = "2.4.1", optional = true }
+native-tls = { version = "0.2", optional = true }
+
+[features]
+# The real, network-touching IMAP backend. Off by default so the core logic builds and
+# tests hermetically; the CLI turns it on.
+real-imap = ["dep:imap", "dep:native-tls"]
