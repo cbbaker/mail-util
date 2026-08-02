@@ -1,0 +1,18 @@
+[package]
+name = "mail-util"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mail-util"
+path = "src/main.rs"
+
+[dependencies]
+model.workspace = true
+mailcache.workspace = true
+suggest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true

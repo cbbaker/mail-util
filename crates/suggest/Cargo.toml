@@ -1,0 +1,14 @@
+[package]
+name = "suggest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+model.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+mailcache.workspace = true
+mockcache.workspace = true
+model.workspace = true
