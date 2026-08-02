@@ -53,6 +53,36 @@ mail-util suggest --min-count 30 | jq '.clusters[] | {count, signal, destination
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
 `--inbox <dotpath>` for other layouts.
 
+## Emacs
+
+`emacs/mail-util.el` provides a review UI over the `suggest` command. Load it and point
+it at your binary and account root:
+
+```elisp
+(add-to-list 'load-path "/path/to/mail-util/emacs")
+(require 'mail-util)
+(setq mail-util-executable "/path/to/mail-util/target/release/mail-util"
+      mail-util-root "~/Maildir/myaccount"   ; or leave nil and set MAILUTIL_ROOT
+      mail-util-min-count 30)
+```
+
+Run `M-x mail-util-review` to analyze the inbox and open `*mail-util-review*`. In that
+buffer:
+
+| key | action |
+|-----|--------|
+| `n` / `p` | move between clusters |
+| `a` / `r` / `u` | approve / reject / unset the cluster at point |
+| `A` | approve all high-confidence clusters |
+| `TAB` | toggle sample senders/subjects |
+| `g` | re-run analysis (keeps your marks by cluster key) |
+| `x` | export the approved clusters to JSON |
+| `q` | quit |
+
+Applying (creating folders and moving mail) is not in the CLI yet; today the workflow is
+review + export. The exported JSON records the approved destinations and message UIDs and
+is the seed for the forthcoming `plan`/`apply` commands.
+
 ## Key design invariant
 
 mbsync's native scheme embeds the IMAP UID in each filename as `,U=<uid>`. Copying that
