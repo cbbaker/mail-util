@@ -435,7 +435,7 @@ cluster.  Run from the review buffer."
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
       (insert (or (alist-get 'sieve_text plan) ""))
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
-      (insert (propertize "\nkeys: v verify · w write sieve · s save plan JSON · q quit\n"
+      (insert (propertize "\nkeys: v verify · d dry-run apply · w write sieve · s save plan JSON · q quit\n"
                           'face 'shadow)))
     (goto-char (point-min))
     (pop-to-buffer (current-buffer))))
@@ -473,6 +473,133 @@ cluster.  Run from the review buffer."
     (with-temp-file file (insert json))
     (message "Wrote plan to %s" file)))
 
+;;;; Apply (dry-run) with live NDJSON progress
+
+(defvar-local mail-util--apply-counts nil
+  "Hash of running counters for the current apply buffer.")
+(defvar-local mail-util--apply-log nil
+  "List of notable apply events, newest first.")
+(defvar-local mail-util--apply-title nil
+  "Title line for the current apply buffer.")
+
+(defconst mail-util--apply-buffer "*mail-util-apply*")
+
+(defun mail-util--run-stream (subargs on-line on-done)
+  "Run `mail-util' with SUBARGS, calling ON-LINE with each parsed JSON stdout
+line and ON-DONE with (EXIT-STATUS STDERR-BUFFER) when the process finishes."
+  (let* ((root-args (when mail-util-root
+                      (list "--root" (expand-file-name mail-util-root))))
+         (command (cons (or (executable-find mail-util-executable) mail-util-executable)
+                        (append root-args subargs)))
+         (stderr (generate-new-buffer " *mail-util-apply-stderr*"))
+         (acc ""))
+    (cl-flet ((parse (s) (json-parse-string s :object-type 'alist :array-type 'list
+                                            :null-object nil :false-object nil)))
+      (make-process
+       :name "mail-util-apply"
+       :buffer nil
+       :stderr stderr
+       :noquery t
+       :command command
+       :filter
+       (lambda (_proc chunk)
+         (setq acc (concat acc chunk))
+         (let ((lines (split-string acc "\n")))
+           (setq acc (car (last lines)))
+           (dolist (line (butlast lines))
+             (unless (string-empty-p line)
+               (funcall on-line (parse line))))))
+       :sentinel
+       (lambda (proc _event)
+         (when (memq (process-status proc) '(exit signal))
+           (unless (string-empty-p (string-trim acc))
+             (funcall on-line (parse acc)))
+           (funcall on-done (process-exit-status proc) stderr)))))))
+
+(defun mail-util--inc (key &optional n)
+  "Add N (default 1) to counter KEY in the apply buffer."
+  (puthash key (+ (gethash key mail-util--apply-counts 0) (or n 1))
+           mail-util--apply-counts))
+
+(defun mail-util--apply-render ()
+  "Redraw the apply buffer from its counters and log."
+  (let ((inhibit-read-only t)
+        (c mail-util--apply-counts))
+    (erase-buffer)
+    (insert (propertize (format "mail-util apply (dry-run) — %s\n"
+                                (or mail-util--apply-title "…"))
+                        'face 'bold))
+    (insert (format "folders %d · simulated %d · moved %d · skipped %d · failed %d\n\n"
+                    (gethash 'folders c 0) (gethash 'simulated c 0)
+                    (gethash 'moved c 0) (gethash 'skipped c 0) (gethash 'failed c 0)))
+    (dolist (line (reverse (seq-take mail-util--apply-log 25)))
+      (insert "  " line "\n"))
+    (goto-char (point-max))))
+
+(defun mail-util--apply-record (rec)
+  "Fold one parsed journal REC into the apply buffer, rendering when notable."
+  (let ((event (alist-get 'event rec))
+        (render t))
+    (pcase event
+      ("plan_loaded"
+       (setq mail-util--apply-title
+             (format "%s · %s actions" (alist-get 'plan_id rec) (alist-get 'actions rec))))
+      ("folder_ensured"
+       (mail-util--inc 'folders)
+       (push (format "＋ folder %s" (alist-get 'dotpath rec)) mail-util--apply-log))
+      ("action_begin" (setq render nil))
+      ("action_moved"
+       (mail-util--inc (if (equal (alist-get 'outcome rec) "moved") 'moved 'simulated))
+       ;; Throttle: only redraw every 100th action to stay snappy on big plans.
+       (setq render (zerop (% (+ (gethash 'moved mail-util--apply-counts 0)
+                                 (gethash 'simulated mail-util--apply-counts 0))
+                              100))))
+      ("action_skipped" (mail-util--inc 'skipped) (setq render nil))
+      ("action_failed"
+       (mail-util--inc 'failed)
+       (push (format "✗ action %s: %s" (alist-get 'index rec) (alist-get 'error rec))
+             mail-util--apply-log))
+      ("fatal" (push (format "FATAL: %s" (alist-get 'error rec)) mail-util--apply-log))
+      ("reconciled" (push "reconciled (mbsync)" mail-util--apply-log))
+      ("done"
+       (push (format "DONE — moved %s · simulated %s · skipped %s · failed %s"
+                     (alist-get 'moved rec) (alist-get 'simulated rec)
+                     (alist-get 'skipped rec) (alist-get 'failed rec))
+             mail-util--apply-log)))
+    (when render (mail-util--apply-render))))
+
+(defun mail-util-apply-dry-run ()
+  "Dry-run the current plan, streaming journal progress into `*mail-util-apply*'.
+Performs no mutation — it exercises the full apply engine and journal."
+  (interactive)
+  (unless mail-util--plan-json (user-error "No plan in this buffer"))
+  (let ((file (make-temp-file "mail-util-plan" nil ".json"))
+        (json mail-util--plan-json)
+        (buf (get-buffer-create mail-util--apply-buffer)))
+    (with-temp-file file (insert json))
+    (with-current-buffer buf
+      (mail-util-apply-mode)
+      (setq mail-util--apply-counts (make-hash-table :test 'eq)
+            mail-util--apply-log nil
+            mail-util--apply-title nil)
+      (let ((inhibit-read-only t)) (erase-buffer) (insert "starting dry-run…\n")))
+    (pop-to-buffer buf)
+    (mail-util--run-stream
+     (list "apply" "--plan" file "--dry-run")
+     (lambda (rec) (when (buffer-live-p buf)
+                     (with-current-buffer buf (mail-util--apply-record rec))))
+     (lambda (status stderr-buf)
+       (ignore-errors (delete-file file))
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (when (/= status 0)
+             (push (concat "stderr: " (string-trim
+                                       (with-current-buffer stderr-buf (buffer-string))))
+                   mail-util--apply-log))
+           (mail-util--apply-render)))
+       (kill-buffer stderr-buf)
+       (message "mail-util apply (dry-run) finished (status %s)" status)))))
+
 ;;;; Major mode & entry point
 
 (defvar mail-util-review-mode-map (make-sparse-keymap)
@@ -480,6 +607,9 @@ cluster.  Run from the review buffer."
 
 (defvar mail-util-plan-mode-map (make-sparse-keymap)
   "Keymap for `mail-util-plan-mode'.")
+
+(defvar mail-util-apply-mode-map (make-sparse-keymap)
+  "Keymap for `mail-util-apply-mode'.")
 
 ;; Bind keys imperatively (not via `defvar-keymap', which — like `defvar' — only
 ;; assigns when unbound) so re-loading this file updates the bindings on the existing
@@ -500,14 +630,21 @@ cluster.  Run from the review buffer."
 
 (pcase-dolist (`(,key . ,cmd)
                '(("v" . mail-util-verify)
+                 ("d" . mail-util-apply-dry-run)
                  ("w" . mail-util-write-sieve)
                  ("s" . mail-util-save-plan)
                  ("q" . quit-window)))
   (keymap-set mail-util-plan-mode-map key cmd))
 
+(keymap-set mail-util-apply-mode-map "q" #'quit-window)
+
 (define-derived-mode mail-util-plan-mode special-mode "mail-util-plan"
   "Major mode for viewing a mail-util sorting plan."
   (setq truncate-lines nil))
+
+(define-derived-mode mail-util-apply-mode special-mode "mail-util-apply"
+  "Major mode for the live apply (dry-run) progress buffer."
+  (setq truncate-lines t))
 
 (define-derived-mode mail-util-review-mode special-mode "mail-util"
   "Major mode for reviewing mail-util sorting suggestions."

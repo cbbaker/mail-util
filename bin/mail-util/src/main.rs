@@ -11,15 +11,18 @@
 //! Mutating subcommands (`apply`, …) arrive in later milestones.
 
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use journal::{apply_plan, JournalFile, JournalRecord, RecordSink, Tee};
 use mailcache::{Account, FolderRef};
 use model::{
     Cluster, Config, FolderSpec, MoveAction, MoverKind, Plan, Precheck, SieveRule,
 };
+use mover::{DryRunMover, Mover};
 use namemap::NameMap;
 use serde::{Deserialize, Serialize};
 use suggest::ExistingFolder;
@@ -76,6 +79,25 @@ enum Command {
         /// Path to a plan JSON file produced by `plan`.
         #[arg(long)]
         plan: PathBuf,
+    },
+    /// Execute a plan (create folders, move mail), journaling every step.
+    ///
+    /// Streams one JSON journal record per line on stdout. `--dry-run` performs no
+    /// mutation. Real movers arrive in later milestones; today only `--dry-run` runs.
+    Apply {
+        /// Path to a plan JSON file produced by `plan`.
+        #[arg(long)]
+        plan: PathBuf,
+        /// Simulate: journal what would happen without touching mail.
+        #[arg(long)]
+        dry_run: bool,
+        /// Required to actually modify mail (ignored for --dry-run).
+        #[arg(long)]
+        yes: bool,
+        /// Journal file (default: ~/.cache/mail-util/journals/<plan_id>.jsonl). If it
+        /// already contains records, completed actions are skipped (resume).
+        #[arg(long)]
+        journal: Option<PathBuf>,
     },
 }
 
@@ -190,7 +212,97 @@ fn main() -> Result<()> {
             approved,
         } => cmd_plan(&account, &root, inbox, *min_count, (*mover).into(), *separator, approved.as_ref()),
         Command::Verify { plan } => cmd_verify(&account, plan),
+        Command::Apply {
+            plan,
+            dry_run,
+            yes,
+            journal,
+        } => cmd_apply(plan, *dry_run, *yes, journal.as_ref()),
     }
+}
+
+/// A [`RecordSink`] that streams NDJSON journal records to stdout for Emacs to tail.
+struct StdoutNdjson;
+
+impl RecordSink for StdoutNdjson {
+    fn emit(&mut self, rec: &JournalRecord) -> Result<()> {
+        let line = serde_json::to_string(rec)?;
+        let mut out = std::io::stdout().lock();
+        out.write_all(line.as_bytes())?;
+        out.write_all(b"\n")?;
+        out.flush()?;
+        Ok(())
+    }
+}
+
+fn default_journal_path(plan_id: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home)
+        .join(".cache")
+        .join("mail-util")
+        .join("journals")
+        .join(format!("{plan_id}.jsonl"))
+}
+
+fn cmd_apply(plan_path: &PathBuf, dry_run: bool, yes: bool, journal: Option<&PathBuf>) -> Result<()> {
+    let text = std::fs::read_to_string(plan_path)
+        .with_context(|| format!("reading plan {}", plan_path.display()))?;
+    let plan: Plan = serde_json::from_str(&text).context("parsing plan JSON")?;
+
+    // Choose the mover. The real movers arrive in later milestones; until then only a
+    // dry run can execute.
+    let mut mover: Box<dyn Mover> = if dry_run {
+        Box::new(DryRunMover)
+    } else {
+        if !yes {
+            anyhow::bail!("refusing to modify mail without --yes (or use --dry-run)");
+        }
+        match plan.mover {
+            MoverKind::Imap => anyhow::bail!(
+                "the IMAP mover is not implemented yet (arrives in M4); re-run with --dry-run"
+            ),
+            MoverKind::Local => anyhow::bail!(
+                "the local mover is not implemented yet (arrives in M5); re-run with --dry-run"
+            ),
+        }
+    };
+
+    // Build the record sink. Dry runs stream to stdout only (nothing to make durable);
+    // a real run also appends to a durable, resumable journal file.
+    let mut done: HashSet<usize> = HashSet::new();
+    let mut sinks: Vec<Box<dyn RecordSink>> = vec![Box::new(StdoutNdjson)];
+    if !dry_run {
+        let jpath = journal
+            .cloned()
+            .unwrap_or_else(|| default_journal_path(&plan.plan_id));
+        if let Some(parent) = jpath.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating journal dir {}", parent.display()))?;
+        }
+        if jpath.exists() {
+            done = journal::completed_actions(&journal::read_journal(&jpath)?);
+            eprintln!("resuming: {} action(s) already completed", done.len());
+        }
+        eprintln!("journal: {}", jpath.display());
+        sinks.push(Box::new(JournalFile::append(&jpath)?));
+    }
+    let mut sink = Tee::new(sinks);
+
+    eprintln!(
+        "{} plan {} ({} actions)…",
+        if dry_run { "dry-run of" } else { "applying" },
+        plan.plan_id,
+        plan.actions.len()
+    );
+    let report = apply_plan(&plan, mover.as_mut(), &mut sink, &done)?;
+    eprintln!(
+        "done: moved={} simulated={} skipped={} failed={}",
+        report.moved, report.simulated, report.skipped, report.failed
+    );
+    if !report.ok() {
+        anyhow::bail!("apply stopped: {}", report.fatal.as_deref().unwrap_or("failure"));
+    }
+    Ok(())
 }
 
 fn cmd_scan(account: &Account, root: &PathBuf, folder: Option<&str>) -> Result<()> {

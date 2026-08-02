@@ -7,6 +7,8 @@ members = [
     "crates/suggest",
     "crates/namemap",
     "crates/sieve",
+    "crates/mover",
+    "crates/journal",
     "bin/mail-util",
 ]
 
@@ -31,3 +33,5 @@ mockcache = { path = "crates/mockcache" }
 suggest = { path = "crates/suggest" }
 namemap = { path = "crates/namemap" }
 sieve = { path = "crates/sieve" }
+mover = { path = "crates/mover" }
+journal = { path = "crates/journal" }
