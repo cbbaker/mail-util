@@ -10,13 +10,15 @@ See `DESIGN.md` for the full design and the milestone roadmap.
 
 ## Status
 
-**M1–M2 done, all read-only (zero mutation).** The tool scans the Maildir, clusters the
-inbox, and produces ranked suggestions (`suggest`), a complete sorting plan with
-per-message move actions + a generated Sieve script (`plan`), and a preflight check of a
-plan against the current cache (`verify`). An Emacs review UI drives `suggest`.
+**M1–M3 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
+suggestions (`suggest`), a complete sorting plan with per-message move actions + a
+generated Sieve script (`plan`), a preflight check of a plan (`verify`), and a crash-safe
+`apply` engine with an append-only journal and no-loss invariants — runnable today as
+`apply --dry-run` (real moves are gated until the movers land). An Emacs UI drives the
+whole loop: review → plan → verify → dry-run apply.
 
-Remaining milestones: M3 journal/apply safety machinery, M4 server-side IMAP mover
-(default), M5 offline local mover, M6 Emacs apply UI + ManageSieve deployment.
+Remaining milestones: M4 server-side IMAP mover (default), M5 offline local mover,
+M6 ManageSieve deployment + polish.
 
 ## Workspace layout
 
@@ -28,7 +30,9 @@ Remaining milestones: M3 journal/apply safety machinery, M4 server-side IMAP mov
 | `crates/suggest` | deterministic clustering (List-Id > sender-domain > person), scoring, taxonomy reuse, human-readable slug generation |
 | `crates/namemap` | maps a folder among its local dotpath, IMAP name, and Sieve target (separator-parameterized) |
 | `crates/sieve` | renders sorting rules to a Sieve script and merges them into an existing user script |
-| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`) emitting JSON on stdout |
+| `crates/mover` | the `Mover` trait plus `DryRunMover` and an in-memory `FakeMover` for safety tests (real IMAP/local movers are later) |
+| `crates/journal` | crash-safe apply engine, append-only journal, and the no-loss invariants |
+| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `apply`) emitting JSON / NDJSON |
 
 ## Build & test
 
@@ -63,6 +67,9 @@ mail-util plan --approved approved.json > plan.json
 
 # Preflight: re-check the plan against the current cache (read-only).
 mail-util verify --plan plan.json      # -> { ok, resolved, unresolved, … }
+
+# Dry-run the plan: stream one JSON journal record per line, moving nothing.
+mail-util apply --plan plan.json --dry-run
 ```
 
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
@@ -101,13 +108,15 @@ Sieve script. There:
 | key | action |
 |-----|--------|
 | `v` | verify the plan against the current cache (resolve every action) |
+| `d` | dry-run the plan — stream live journal progress into `*mail-util-apply*` |
 | `w` | write the Sieve script to a file |
 | `s` | save the plan JSON to a file |
 | `q` | quit |
 
-Applying (creating folders and moving mail) is not in the CLI yet, so the plan buffer is
-review-only: inspect the folders and Sieve, verify it, and save the pieces. Executing the
-plan arrives with the `apply` command.
+`d` runs `apply --dry-run`: it drives the full apply engine and crash-safe journal and
+shows a live counter of folders ensured / messages simulated, but **moves nothing**. Real
+execution (server-side IMAP moves) arrives in a later milestone; the CLI refuses a
+non-dry-run apply until then.
 
 ## Key design invariant
 

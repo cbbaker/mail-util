@@ -196,6 +196,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "journal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "model",
+ "mover",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -222,9 +233,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "journal",
  "mailcache",
  "mockcache",
  "model",
+ "mover",
  "namemap",
  "serde",
  "serde_json",
@@ -264,6 +277,14 @@ name = "model"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "mover"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "model",
 ]
 
 [[package]]

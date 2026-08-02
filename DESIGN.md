@@ -95,7 +95,9 @@ Planned: `namemap`, `sieve`, `mover`, `journal`, and an Emacs front-end.
 1. **M1 — read-only slice (done):** scan + suggest as JSON.
 2. **M2 — pure plan + Sieve generation, folder-name mapping (done):** `plan`/`verify`
    commands, `namemap` and `sieve` crates.
-3. **M3 — journal/apply safety machinery + no-loss property tests.**
+3. **M3 — journal/apply safety machinery + no-loss property tests (done):** `mover`
+   (trait + DryRun + Fake) and `journal` crates, the `apply` command (`--dry-run`
+   runnable today), crash/resume and conservation tests.
 4. **M4 — server-side IMAP mover (default) + mbsync reconcile.**
 5. **M5 — offline local mover.**
 6. **M6 — Emacs review UI + ManageSieve deployment + LLM labeling.**

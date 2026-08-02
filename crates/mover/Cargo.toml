@@ -1,0 +1,9 @@
+[package]
+name = "mover"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+model.workspace = true
+anyhow.workspace = true
