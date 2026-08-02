@@ -130,6 +130,101 @@ pub struct Config {
     pub work_domains: Vec<String>,
 }
 
+/// Which mover applies a plan. `Imap` (server-side `UID MOVE`) is the safe default;
+/// `Local` manipulates the Maildir offline and is opt-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoverKind {
+    Imap,
+    Local,
+}
+
+impl Default for MoverKind {
+    fn default() -> Self {
+        MoverKind::Imap
+    }
+}
+
+/// A folder the plan will ensure exists, in all three naming forms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderSpec {
+    pub dotpath: String,
+    pub imap_name: String,
+    pub sieve_target: String,
+    /// True if the folder already exists in the cache (reuse, not create).
+    pub exists: bool,
+}
+
+/// One message to relocate. Identity is `(src_folder, uid)` within the native scheme;
+/// `message_id` is the cross-folder identity used for no-loss verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveAction {
+    pub message_id: Option<String>,
+    pub src_folder: String,
+    pub uid: Option<u32>,
+    pub src_filename: String,
+    pub dst_dotpath: String,
+    pub dst_imap: String,
+    /// The cluster key that motivated this move (for grouping/undo).
+    pub cluster_key: String,
+}
+
+/// A sieve test condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SieveTest {
+    /// `header :contains "<header>" "<value>"`.
+    HeaderContains { header: String, value: String },
+    /// `address :domain :is "<header>" "<domain>"`.
+    AddressDomain { header: String, domain: String },
+    /// `address :all :is "<header>" "<address>"`.
+    AddressIs { header: String, address: String },
+}
+
+/// A single generated sieve rule: a test, a destination, and whether to stop after.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SieveRule {
+    pub test: SieveTest,
+    pub fileinto: String,
+    pub stop: bool,
+    pub comment: Option<String>,
+}
+
+/// Read-only invariant precheck computed before any mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Precheck {
+    /// Folders considered part of the message-conservation universe.
+    pub universe_folders: usize,
+    /// Total messages across the universe.
+    pub total_messages: usize,
+    /// Distinct Message-IDs across the universe (equal to total iff no dup/missing ids).
+    pub distinct_message_ids: usize,
+    /// Number of planned move actions.
+    pub actions: usize,
+    /// Actions whose source message lacks a Message-ID (identity falls back to a hash).
+    pub actions_missing_message_id: usize,
+    /// Actions whose source message could not be located on disk (should be 0).
+    pub actions_unresolved: usize,
+}
+
+/// A complete, reviewable sorting plan. Produced by the pure `plan` command; never
+/// mutates anything itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub plan_id: String,
+    pub account_root: String,
+    pub inbox: String,
+    pub mover: MoverKind,
+    /// IMAP hierarchy separator used for name mapping (probed later; assumed for now).
+    pub separator: char,
+    pub folders_to_create: Vec<FolderSpec>,
+    pub actions: Vec<MoveAction>,
+    pub sieve_rules: Vec<SieveRule>,
+    /// The rendered sieve script fragment for `sieve_rules`.
+    pub sieve_text: String,
+    pub precheck: Precheck,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {

@@ -5,6 +5,8 @@ members = [
     "crates/mailcache",
     "crates/mockcache",
     "crates/suggest",
+    "crates/namemap",
+    "crates/sieve",
     "bin/mail-util",
 ]
 
@@ -27,3 +29,5 @@ model = { path = "crates/model" }
 mailcache = { path = "crates/mailcache" }
 mockcache = { path = "crates/mockcache" }
 suggest = { path = "crates/suggest" }
+namemap = { path = "crates/namemap" }
+sieve = { path = "crates/sieve" }

@@ -95,40 +95,46 @@ When nil, the CLI falls back to the MAILUTIL_ROOT environment variable."
 
 ;;;; Running the CLI
 
-(defun mail-util--suggest-args ()
-  "Build the argument list for `mail-util suggest'."
-  (append (list "suggest"
-                "--inbox" mail-util-inbox
-                "--min-count" (number-to-string mail-util-min-count))
-          (when mail-util-root (list "--root" (expand-file-name mail-util-root)))))
+(defvar mail-util--last-json nil
+  "Raw JSON text from the most recent successful CLI run, for saving to a file.")
 
-(defun mail-util--run-suggest (callback)
-  "Run `mail-util suggest' asynchronously and call CALLBACK with parsed JSON.
-CALLBACK is invoked in the review buffer on success; on failure an
-error is signaled with the CLI's stderr."
+(defun mail-util--common-args ()
+  "The `--inbox'/`--min-count' args shared by suggest and plan."
+  (list "--inbox" mail-util-inbox
+        "--min-count" (number-to-string mail-util-min-count)))
+
+(defun mail-util--run-json (subargs callback)
+  "Run `mail-util' with SUBARGS (subcommand + flags) asynchronously.
+On success, set `mail-util--last-json' to the raw stdout and call
+CALLBACK with the parsed JSON (alists / lists).  The account root is
+prepended from `mail-util-root' when set."
   (let* ((stdout (generate-new-buffer " *mail-util-stdout*"))
          (stderr (generate-new-buffer " *mail-util-stderr*"))
-         (args (mail-util--suggest-args)))
-    (message "mail-util: analyzing inbox (%s) …" mail-util-inbox)
+         (root-args (when mail-util-root
+                      (list "--root" (expand-file-name mail-util-root))))
+         (command (cons (or (executable-find mail-util-executable) mail-util-executable)
+                        (append root-args subargs))))
     (make-process
-     :name "mail-util-suggest"
+     :name "mail-util"
      :buffer stdout
      :stderr stderr
      :noquery t
-     :command (cons (or (executable-find mail-util-executable) mail-util-executable)
-                    args)
+     :command command
      :sentinel
      (lambda (proc event)
        (when (memq (process-status proc) '(exit signal))
          (unwind-protect
              (if (and (eq (process-status proc) 'exit)
                       (zerop (process-exit-status proc)))
-                 (let ((data (with-current-buffer stdout
-                               (goto-char (point-min))
-                               (json-parse-buffer :object-type 'alist
-                                                  :array-type 'list
-                                                  :null-object nil
-                                                  :false-object nil))))
+                 (let* ((raw (with-current-buffer stdout (buffer-string)))
+                        (data (with-temp-buffer
+                                (insert raw)
+                                (goto-char (point-min))
+                                (json-parse-buffer :object-type 'alist
+                                                   :array-type 'list
+                                                   :null-object nil
+                                                   :false-object nil))))
+                   (setq mail-util--last-json raw)
                    (funcall callback data))
                (let ((err (string-trim (with-current-buffer stderr (buffer-string)))))
                  (message "mail-util failed (%s): %s"
@@ -136,6 +142,11 @@ error is signaled with the CLI's stderr."
                           (if (string-empty-p err) "see *Messages*" err))))
            (kill-buffer stdout)
            (kill-buffer stderr)))))))
+
+(defun mail-util--run-suggest (callback)
+  "Run `mail-util suggest' and call CALLBACK with parsed JSON."
+  (message "mail-util: analyzing inbox (%s) …" mail-util-inbox)
+  (mail-util--run-json (cons "suggest" (mail-util--common-args)) callback))
 
 ;;;; Rendering
 
@@ -203,7 +214,7 @@ error is signaled with the CLI's stderr."
                        approved rejected (- n approved rejected))
                'face 'shadow))
       (insert (propertize
-               "keys: n/p move · a approve · r reject · u unset · TAB details · g refresh · x export · q quit\n\n"
+               "keys: n/p move · a/r/u approve/reject/unset · A all-high · TAB details · P plan · g refresh · x export · q quit\n\n"
                'face 'shadow)))
     (dotimes (i (length mail-util--clusters))
       (mail-util--insert-cluster i (aref mail-util--clusters i)))
@@ -357,20 +368,146 @@ the destination folders and message UIDs you approved."
                        :approved (apply #'vector approved)))))
       (message "Wrote %d approved cluster(s) to %s" (length approved) file))))
 
+;;;; Plan / verify
+
+(defvar-local mail-util--plan nil
+  "Parsed plan alist shown in the current `*mail-util-plan*' buffer.")
+(defvar-local mail-util--plan-json nil
+  "Raw plan JSON text backing the current plan buffer (for verify/save).")
+
+(defconst mail-util--plan-buffer "*mail-util-plan*")
+
+(defun mail-util--approved-keys-file ()
+  "Write the approved cluster keys to a temp file for `plan --approved'.
+Return the file path, or nil when no clusters are approved (plan everything)."
+  (let ((approved
+         (cl-loop for i from 0 below (length mail-util--clusters)
+                  when (eq (mail-util--mark i) 'approved)
+                  collect (list :key (alist-get 'key (aref mail-util--clusters i))))))
+    (when approved
+      (let ((file (make-temp-file "mail-util-approved" nil ".json")))
+        (with-temp-file file
+          (insert (json-serialize (list :approved (apply #'vector approved)))))
+        file))))
+
+(defun mail-util-build-plan ()
+  "Build a sorting plan and show it in `*mail-util-plan*'.
+Uses the approved clusters if any are marked, otherwise every surfaced
+cluster.  Run from the review buffer."
+  (interactive)
+  (let* ((approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
+         (args (append (list "plan") (mail-util--common-args)
+                       (when approved-file (list "--approved" approved-file)))))
+    (message "mail-util: building plan …")
+    (mail-util--run-json
+     args
+     (lambda (plan)
+       (when approved-file (ignore-errors (delete-file approved-file)))
+       (mail-util--show-plan plan mail-util--last-json)))))
+
+(defun mail-util--show-plan (plan raw)
+  "Render PLAN (parsed) with RAW json text into the plan buffer."
+  (with-current-buffer (get-buffer-create mail-util--plan-buffer)
+    (unless (derived-mode-p 'mail-util-plan-mode)
+      (mail-util-plan-mode))
+    (setq mail-util--plan plan
+          mail-util--plan-json raw)
+    (let ((inhibit-read-only t)
+          (pc (alist-get 'precheck plan)))
+      (erase-buffer)
+      (insert (propertize (format "mail-util plan %s\n" (alist-get 'plan_id plan)) 'face 'bold))
+      (insert (format "mover: %s   separator: %s   inbox: %s\n"
+                      (alist-get 'mover plan) (alist-get 'separator plan)
+                      (alist-get 'inbox plan)))
+      (insert (format "actions: %s   folders to create: %s   unresolved: %s   missing msg-id: %s\n\n"
+                      (alist-get 'actions pc)
+                      (length (alist-get 'folders_to_create plan))
+                      (alist-get 'actions_unresolved pc)
+                      (alist-get 'actions_missing_message_id pc)))
+      (insert (propertize "Folders to create\n" 'face 'bold))
+      (if (alist-get 'folders_to_create plan)
+          (dolist (f (alist-get 'folders_to_create plan))
+            (insert (format "  %s  →  %s\n"
+                            (propertize (alist-get 'dotpath f) 'face 'mail-util-destination)
+                            (alist-get 'imap_name f))))
+        (insert "  (none — all destinations already exist)\n"))
+      (insert (propertize "\nSieve script\n" 'face 'bold))
+      (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
+      (insert (or (alist-get 'sieve_text plan) ""))
+      (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
+      (insert (propertize "\nkeys: v verify · w write sieve · s save plan JSON · q quit\n"
+                          'face 'shadow)))
+    (goto-char (point-min))
+    (pop-to-buffer (current-buffer))))
+
+(defun mail-util-verify ()
+  "Verify the plan in the current plan buffer against the cache."
+  (interactive)
+  (unless mail-util--plan-json (user-error "No plan in this buffer"))
+  (let ((file (make-temp-file "mail-util-plan" nil ".json"))
+        (json mail-util--plan-json))
+    (with-temp-file file (insert json))
+    (message "mail-util: verifying …")
+    (mail-util--run-json
+     (list "verify" "--plan" file)
+     (lambda (res)
+       (ignore-errors (delete-file file))
+       (message "verify: %s  resolved %s/%s  unresolved %s  into-excluded %s"
+                (if (alist-get 'ok res) "OK" "PROBLEM")
+                (alist-get 'resolved res) (alist-get 'actions res)
+                (alist-get 'unresolved res) (alist-get 'actions_into_excluded res))))))
+
+(defun mail-util-write-sieve (file)
+  "Write the current plan's sieve script to FILE."
+  (interactive (list (read-file-name "Write sieve to: ")))
+  (unless mail-util--plan (user-error "No plan in this buffer"))
+  (let ((text (alist-get 'sieve_text mail-util--plan)))
+    (with-temp-file file (insert text))
+    (message "Wrote sieve to %s" file)))
+
+(defun mail-util-save-plan (file)
+  "Save the current plan's raw JSON to FILE."
+  (interactive (list (read-file-name "Save plan JSON to: ")))
+  (unless mail-util--plan-json (user-error "No plan in this buffer"))
+  (let ((json mail-util--plan-json))
+    (with-temp-file file (insert json))
+    (message "Wrote plan to %s" file)))
+
 ;;;; Major mode & entry point
 
-(defvar-keymap mail-util-review-mode-map
-  :doc "Keymap for `mail-util-review-mode'."
-  "n" #'mail-util-next
-  "p" #'mail-util-previous
-  "a" #'mail-util-approve
-  "r" #'mail-util-reject
-  "u" #'mail-util-unset
-  "A" #'mail-util-approve-all-high
-  "TAB" #'mail-util-toggle-details
-  "g" #'mail-util-refresh
-  "x" #'mail-util-export-approved
-  "q" #'quit-window)
+(defvar mail-util-review-mode-map (make-sparse-keymap)
+  "Keymap for `mail-util-review-mode'.")
+
+(defvar mail-util-plan-mode-map (make-sparse-keymap)
+  "Keymap for `mail-util-plan-mode'.")
+
+;; Bind keys imperatively (not via `defvar-keymap', which — like `defvar' — only
+;; assigns when unbound) so re-loading this file updates the bindings on the existing
+;; keymap objects, and therefore in any already-open review/plan buffers.
+(pcase-dolist (`(,key . ,cmd)
+               '(("n" . mail-util-next)
+                 ("p" . mail-util-previous)
+                 ("a" . mail-util-approve)
+                 ("r" . mail-util-reject)
+                 ("u" . mail-util-unset)
+                 ("A" . mail-util-approve-all-high)
+                 ("TAB" . mail-util-toggle-details)
+                 ("P" . mail-util-build-plan)
+                 ("g" . mail-util-refresh)
+                 ("x" . mail-util-export-approved)
+                 ("q" . quit-window)))
+  (keymap-set mail-util-review-mode-map key cmd))
+
+(pcase-dolist (`(,key . ,cmd)
+               '(("v" . mail-util-verify)
+                 ("w" . mail-util-write-sieve)
+                 ("s" . mail-util-save-plan)
+                 ("q" . quit-window)))
+  (keymap-set mail-util-plan-mode-map key cmd))
+
+(define-derived-mode mail-util-plan-mode special-mode "mail-util-plan"
+  "Major mode for viewing a mail-util sorting plan."
+  (setq truncate-lines nil))
 
 (define-derived-mode mail-util-review-mode special-mode "mail-util"
   "Major mode for reviewing mail-util sorting suggestions."
