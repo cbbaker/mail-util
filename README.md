@@ -74,7 +74,8 @@ mail-util verify --plan plan.json      # -> { ok, resolved, unresolved, … }
 mail-util apply --plan plan.json --dry-run
 
 # Read-only probe: the server's hierarchy separator and MOVE support.
-mail-util probe --imap-host imap.example.com
+# --imap-user picks the account when several share a host.
+mail-util probe --imap-host imap.example.com --imap-user me@example.com
 
 # Real apply: move mail server-side via IMAP, then reconcile the local cache.
 # Requires --yes; credentials come from ~/.netrc (same machine line mbsync uses).
@@ -98,6 +99,7 @@ it at your binary and account root:
       mail-util-min-count 30
       ;; For probe / real apply:
       mail-util-imap-host "imap.example.com"
+      mail-util-imap-user "me@example.com"       ; pick the account when a host is shared
       mail-util-mbsync-channel "your-channel")   ; run after moves to reconcile
 ```
 

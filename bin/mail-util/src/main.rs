@@ -86,6 +86,10 @@ enum Command {
         /// IMAP server hostname (credentials read from ~/.netrc for this machine).
         #[arg(long)]
         imap_host: String,
+        /// IMAP login. Needed to pick the right account when several share a host;
+        /// omit to use the first ~/.netrc entry for the host.
+        #[arg(long)]
+        imap_user: Option<String>,
         #[arg(long, default_value_t = 993)]
         imap_port: u16,
     },
@@ -106,6 +110,9 @@ enum Command {
         /// IMAP server hostname for a real apply (creds via ~/.netrc).
         #[arg(long)]
         imap_host: Option<String>,
+        /// IMAP login (to pick the right account when several share a host).
+        #[arg(long)]
+        imap_user: Option<String>,
         #[arg(long, default_value_t = 993)]
         imap_port: u16,
         /// After the moves, run `mbsync <channel>` to reconcile the local cache.
@@ -232,12 +239,17 @@ fn main() -> Result<()> {
             approved,
         } => cmd_plan(&account, &root, inbox, *min_count, (*mover).into(), *separator, approved.as_ref()),
         Command::Verify { plan } => cmd_verify(&account, plan),
-        Command::Probe { imap_host, imap_port } => cmd_probe(imap_host, *imap_port),
+        Command::Probe {
+            imap_host,
+            imap_user,
+            imap_port,
+        } => cmd_probe(imap_host, imap_user.as_deref(), *imap_port),
         Command::Apply {
             plan,
             dry_run,
             yes,
             imap_host,
+            imap_user,
             imap_port,
             mbsync_channel,
             mbsync_cmd,
@@ -248,6 +260,7 @@ fn main() -> Result<()> {
             *dry_run,
             *yes,
             imap_host.as_deref(),
+            imap_user.as_deref(),
             *imap_port,
             mbsync_channel.as_deref(),
             mbsync_cmd,
@@ -257,9 +270,9 @@ fn main() -> Result<()> {
 }
 
 /// Connect (read-only) and report the server's hierarchy separator and MOVE capability.
-fn cmd_probe(host: &str, port: u16) -> Result<()> {
-    let auth = netrc::read_default(host)?;
-    eprintln!("connecting to {host}:{port} …");
+fn cmd_probe(host: &str, user: Option<&str>, port: u16) -> Result<()> {
+    let auth = netrc::read_default(host, user)?;
+    eprintln!("connecting to {host}:{port} as {} …", auth.login);
     let ops = RealImapOps::connect(host, port, &auth.login, &auth.password)?;
     #[derive(Serialize)]
     struct ProbeOut {
@@ -355,6 +368,7 @@ fn cmd_apply(
     dry_run: bool,
     yes: bool,
     imap_host: Option<&str>,
+    imap_user: Option<&str>,
     imap_port: u16,
     mbsync_channel: Option<&str>,
     mbsync_cmd: &str,
@@ -381,8 +395,8 @@ fn cmd_apply(
                 let host = imap_host.ok_or_else(|| {
                     anyhow::anyhow!("a real IMAP apply needs --imap-host <server>")
                 })?;
-                let auth = netrc::read_default(host)?;
-                eprintln!("connecting to {host}:{imap_port} …");
+                let auth = netrc::read_default(host, imap_user)?;
+                eprintln!("connecting to {host}:{imap_port} as {} …", auth.login);
                 let ops = RealImapOps::connect(host, imap_port, &auth.login, &auth.password)?;
                 let separator = ops.delimiter();
                 eprintln!(

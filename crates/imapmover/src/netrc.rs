@@ -9,10 +9,11 @@ pub struct NetrcAuth {
     pub password: String,
 }
 
-/// Find the `login`/`password` for `machine` in netrc `contents`. Tokens are
-/// whitespace-separated per the netrc format; a `machine`/`default` keyword ends the
-/// previous entry.
-pub fn find_machine(contents: &str, machine: &str) -> Option<NetrcAuth> {
+/// Find the auth for `machine` in netrc `contents`. When `want_login` is `Some`, only an
+/// entry whose `login` matches is returned — this is how several accounts on one server
+/// are disambiguated (multiple `machine <host>` entries with different logins). Tokens are
+/// whitespace-separated per the netrc format; a `machine`/`default` keyword ends an entry.
+pub fn find(contents: &str, machine: &str, want_login: Option<&str>) -> Option<NetrcAuth> {
     let tokens: Vec<&str> = contents.split_whitespace().collect();
     let mut i = 0;
     while i < tokens.len() {
@@ -37,7 +38,9 @@ pub fn find_machine(contents: &str, machine: &str) -> Option<NetrcAuth> {
                 }
             }
             if let (Some(login), Some(password)) = (login, password) {
-                return Some(NetrcAuth { login, password });
+                if want_login.is_none_or(|w| w == login) {
+                    return Some(NetrcAuth { login, password });
+                }
             }
         }
         i += 1;
@@ -45,14 +48,21 @@ pub fn find_machine(contents: &str, machine: &str) -> Option<NetrcAuth> {
     None
 }
 
-/// Read `~/.netrc` and return the auth for `machine`.
-pub fn read_default(machine: &str) -> Result<NetrcAuth> {
+/// Convenience: first entry for `machine`, regardless of login.
+pub fn find_machine(contents: &str, machine: &str) -> Option<NetrcAuth> {
+    find(contents, machine, None)
+}
+
+/// Read `~/.netrc` and return the auth for `machine` (optionally requiring `login`).
+pub fn read_default(machine: &str, login: Option<&str>) -> Result<NetrcAuth> {
     let home = std::env::var("HOME").context("HOME not set")?;
     let path = std::path::Path::new(&home).join(".netrc");
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("reading {}", path.display()))?;
-    find_machine(&contents, machine)
-        .with_context(|| format!("no netrc entry for machine {machine}"))
+    find(&contents, machine, login).with_context(|| match login {
+        Some(l) => format!("no netrc entry for machine {machine} login {l}"),
+        None => format!("no netrc entry for machine {machine}"),
+    })
 }
 
 #[cfg(test)]
@@ -73,6 +83,19 @@ mod tests {
                   machine b.com login bu password bp\n";
         assert_eq!(find_machine(nc, "b.com").unwrap().login, "bu");
         assert!(find_machine(nc, "c.com").is_none());
+    }
+
+    #[test]
+    fn disambiguates_multiple_logins_on_one_machine() {
+        let nc = "machine mail.example.com login a@example.com password apass\n\
+                  machine mail.example.com login b@example.com password bpass\n";
+        // Without a login we get the first; with one we get the exact account.
+        assert_eq!(find_machine(nc, "mail.example.com").unwrap().login, "a@example.com");
+        assert_eq!(
+            find(nc, "mail.example.com", Some("b@example.com")).unwrap().password,
+            "bpass"
+        );
+        assert!(find(nc, "mail.example.com", Some("c@example.com")).is_none());
     }
 
     #[test]

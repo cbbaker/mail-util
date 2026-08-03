@@ -56,6 +56,13 @@ When nil, the CLI falls back to the MAILUTIL_ROOT environment variable."
 Credentials are read from ~/.netrc for this machine (as mbsync does)."
   :type '(choice (const :tag "Unset" nil) string))
 
+(defcustom mail-util-imap-user nil
+  "IMAP login for `mail-util-probe' and a real apply.
+Needed to pick the right account when several share `mail-util-imap-host';
+the matching ~/.netrc entry supplies the password. Leave nil to use the
+first netrc entry for the host."
+  :type '(choice (const :tag "First netrc entry" nil) string))
+
 (defcustom mail-util-imap-port 993
   "IMAP server port."
   :type 'natnum)
@@ -603,6 +610,8 @@ dry run that mutates nothing."
                        (when real
                          (append (list "--imap-host" mail-util-imap-host
                                        "--imap-port" (number-to-string mail-util-imap-port))
+                                 (when mail-util-imap-user
+                                   (list "--imap-user" mail-util-imap-user))
                                  (when mail-util-mbsync-channel
                                    (list "--mbsync-channel" mail-util-mbsync-channel)))))))
     (with-temp-file file (insert json))
@@ -649,8 +658,9 @@ dry run that mutates nothing."
   (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
   (message "mail-util: probing %s …" mail-util-imap-host)
   (mail-util--run-json
-   (list "probe" "--imap-host" mail-util-imap-host
-         "--imap-port" (number-to-string mail-util-imap-port))
+   (append (list "probe" "--imap-host" mail-util-imap-host
+                 "--imap-port" (number-to-string mail-util-imap-port))
+           (when mail-util-imap-user (list "--imap-user" mail-util-imap-user)))
    (lambda (res)
      (message "probe %s: separator %S · server MOVE: %s"
               (alist-get 'host res) (alist-get 'separator res)
