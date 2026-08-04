@@ -10,15 +10,16 @@ See `DESIGN.md` for the full design and the milestone roadmap.
 
 ## Status
 
-**M1–M3 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
+**M1–M4 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
 suggestions (`suggest`), a complete sorting plan with per-message move actions + a
-generated Sieve script (`plan`), a preflight check of a plan (`verify`), and a crash-safe
-`apply` engine with an append-only journal and no-loss invariants — runnable today as
-`apply --dry-run` (real moves are gated until the movers land). An Emacs UI drives the
-whole loop: review → plan → verify → dry-run apply.
+generated Sieve script (`plan`), a preflight check (`verify`), and a crash-safe `apply`
+engine with an append-only journal and no-loss invariants. Applying now has a **real
+server-side IMAP mover** (`UID MOVE` with a `COPY`+`EXPUNGE` fallback) that moves mail on
+the server and then reconciles the local cache with `mbsync`, verifying UIDVALIDITY is
+unchanged. `probe` reports the server's hierarchy separator and MOVE support. The Emacs UI
+drives the whole loop: review → plan → verify → dry-run → (guarded) real apply.
 
-Remaining milestones: M4 server-side IMAP mover (default), M5 offline local mover,
-M6 ManageSieve deployment + polish.
+Remaining milestones: M5 offline local mover, M6 ManageSieve deployment + polish.
 
 ## Workspace layout
 
@@ -32,7 +33,8 @@ M6 ManageSieve deployment + polish.
 | `crates/sieve` | renders sorting rules to a Sieve script and merges them into an existing user script |
 | `crates/mover` | the `Mover` trait plus `DryRunMover` and an in-memory `FakeMover` for safety tests (real IMAP/local movers are later) |
 | `crates/journal` | crash-safe apply engine, append-only journal, and the no-loss invariants |
-| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `apply`) emitting JSON / NDJSON |
+| `crates/imapmover` | server-side `Mover`: `ImapOps` trait, `ImapMover` logic, `FakeImapOps` for tests, and a real `imap`-crate backend (`real-imap` feature) + `.netrc` auth |
+| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `probe`, `apply`) emitting JSON / NDJSON |
 
 ## Build & test
 
@@ -70,6 +72,15 @@ mail-util verify --plan plan.json      # -> { ok, resolved, unresolved, … }
 
 # Dry-run the plan: stream one JSON journal record per line, moving nothing.
 mail-util apply --plan plan.json --dry-run
+
+# Read-only probe: the server's hierarchy separator and MOVE support.
+# --imap-user picks the account when several share a host.
+mail-util probe --imap-host imap.example.com --imap-user me@example.com
+
+# Real apply: move mail server-side via IMAP, then reconcile the local cache.
+# Requires --yes; credentials come from ~/.netrc (same machine line mbsync uses).
+mail-util apply --plan plan.json --yes \
+  --imap-host imap.example.com --mbsync-channel <your-channel>
 ```
 
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
@@ -85,8 +96,14 @@ it at your binary and account root:
 (require 'mail-util)
 (setq mail-util-executable "/path/to/mail-util/target/release/mail-util"
       mail-util-root "~/Maildir/myaccount"   ; or leave nil and set MAILUTIL_ROOT
-      mail-util-min-count 30)
+      mail-util-min-count 30
+      ;; For probe / real apply:
+      mail-util-imap-host "imap.example.com"
+      mail-util-imap-user "me@example.com"       ; pick the account when a host is shared
+      mail-util-mbsync-channel "your-channel")   ; run after moves to reconcile
 ```
+
+`M-x mail-util-probe` checks the server connection (read-only).
 
 Run `M-x mail-util-review` to analyze the inbox and open `*mail-util-review*`. In that
 buffer:
@@ -109,14 +126,15 @@ Sieve script. There:
 |-----|--------|
 | `v` | verify the plan against the current cache (resolve every action) |
 | `d` | dry-run the plan — stream live journal progress into `*mail-util-apply*` |
+| `X` | **apply for real** — move mail server-side (prompts for confirmation first) |
 | `w` | write the Sieve script to a file |
 | `s` | save the plan JSON to a file |
 | `q` | quit |
 
-`d` runs `apply --dry-run`: it drives the full apply engine and crash-safe journal and
-shows a live counter of folders ensured / messages simulated, but **moves nothing**. Real
-execution (server-side IMAP moves) arrives in a later milestone; the CLI refuses a
-non-dry-run apply until then.
+`d` runs `apply --dry-run` (moves nothing). `X` runs the real apply: it asks
+`REALLY move N messages on <host>?`, then moves them server-side via IMAP and reconciles
+the cache with `mbsync` (needs `mail-util-imap-host`; `mail-util-mbsync-channel` for the
+reconcile). Both stream live counters into `*mail-util-apply*`.
 
 ## Key design invariant
 

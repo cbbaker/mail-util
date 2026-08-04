@@ -98,6 +98,8 @@ Planned: `namemap`, `sieve`, `mover`, `journal`, and an Emacs front-end.
 3. **M3 — journal/apply safety machinery + no-loss property tests (done):** `mover`
    (trait + DryRun + Fake) and `journal` crates, the `apply` command (`--dry-run`
    runnable today), crash/resume and conservation tests.
-4. **M4 — server-side IMAP mover (default) + mbsync reconcile.**
+4. **M4 — server-side IMAP mover (default) + mbsync reconcile (done):** `imapmover`
+   crate (`ImapOps` trait + `ImapMover` + `FakeImapOps`, real `imap` backend, `.netrc`
+   auth), `probe` command, real `apply` with UIDVALIDITY-stability check.
 5. **M5 — offline local mover.**
 6. **M6 — Emacs review UI + ManageSieve deployment + LLM labeling.**
