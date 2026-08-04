@@ -423,7 +423,8 @@ cluster.  Run from the review buffer."
   (interactive)
   (let* ((approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
          (args (append (list "plan") (mail-util--common-args)
-                       (list "--mover" mail-util-mover)
+                       ;; Coerce to a string so a symbol value (e.g. `local) also works.
+                       (list "--mover" (format "%s" mail-util-mover))
                        (when approved-file (list "--approved" approved-file)))))
     (message "mail-util: building plan …")
     (mail-util--run-json
