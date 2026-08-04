@@ -720,13 +720,16 @@ dry run that mutates nothing."
   (setq mail-util--expanded (make-hash-table :test 'eql)))
 
 (defun mail-util--load (data)
-  "Populate buffer-local state from parsed JSON DATA."
+  "Populate buffer-local state from parsed JSON DATA.
+Marks and expansion are keyed by cluster index, which is only meaningful for
+the freshly loaded list — so reset them here. `mail-util-refresh' captures the
+marks by cluster key before reloading and re-applies them afterward, so a
+refresh preserves your selections without letting stale index marks leak onto
+whatever cluster now sits at that index."
   (setq mail-util--clusters (apply #'vector (alist-get 'clusters data)))
   (setq mail-util--meta data)
-  (unless (hash-table-p mail-util--marks)
-    (setq mail-util--marks (make-hash-table :test 'eql)))
-  (unless (hash-table-p mail-util--expanded)
-    (setq mail-util--expanded (make-hash-table :test 'eql))))
+  (setq mail-util--marks (make-hash-table :test 'eql))
+  (setq mail-util--expanded (make-hash-table :test 'eql)))
 
 ;;;###autoload
 (defun mail-util-review ()
