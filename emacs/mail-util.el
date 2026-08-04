@@ -71,6 +71,12 @@ first netrc entry for the host."
   "If set, a real apply runs `mbsync <channel>' afterward to reconcile the cache."
   :type '(choice (const :tag "Don't reconcile" nil) string))
 
+(defcustom mail-util-mover "imap"
+  "Which mover a built plan targets.
+\"imap\" moves messages server-side (default, safest); \"local\" manipulates
+the Maildir offline. A real apply reads this from the plan."
+  :type '(choice (const "imap") (const "local")))
+
 ;;;; Faces
 
 (defface mail-util-approved '((t :inherit success))
@@ -417,6 +423,7 @@ cluster.  Run from the review buffer."
   (interactive)
   (let* ((approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
          (args (append (list "plan") (mail-util--common-args)
+                       (list "--mover" mail-util-mover)
                        (when approved-file (list "--approved" approved-file)))))
     (message "mail-util: building plan …")
     (mail-util--run-json
@@ -596,24 +603,26 @@ line and ON-DONE with (EXIT-STATUS STDERR-BUFFER) when the process finishes."
 When REAL is non-nil this MOVES MAIL (after confirmation); otherwise it is a
 dry run that mutates nothing."
   (unless mail-util--plan-json (user-error "No plan in this buffer"))
-  (when real
-    (unless mail-util-imap-host
-      (user-error "Set `mail-util-imap-host' for a real apply"))
-    (let ((n (length (alist-get 'actions mail-util--plan))))
-      (unless (yes-or-no-p
-               (format "REALLY move %d message(s) on %s? " n mail-util-imap-host))
-        (user-error "Aborted"))))
-  (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
-         (json mail-util--plan-json)
-         (buf (get-buffer-create mail-util--apply-buffer))
-         (args (append (list "apply" "--plan" file (if real "--yes" "--dry-run"))
-                       (when real
-                         (append (list "--imap-host" mail-util-imap-host
-                                       "--imap-port" (number-to-string mail-util-imap-port))
-                                 (when mail-util-imap-user
-                                   (list "--imap-user" mail-util-imap-user))
-                                 (when mail-util-mbsync-channel
-                                   (list "--mbsync-channel" mail-util-mbsync-channel)))))))
+  (let ((mover (or (alist-get 'mover mail-util--plan) "imap")))
+    (when real
+      (when (equal mover "imap")
+        (unless mail-util-imap-host
+          (user-error "Set `mail-util-imap-host' for a real IMAP apply")))
+      (let ((n (length (alist-get 'actions mail-util--plan))))
+        (unless (yes-or-no-p
+                 (format "REALLY move %d message(s) [%s mover]? " n mover))
+          (user-error "Aborted"))))
+    (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
+           (json mail-util--plan-json)
+           (buf (get-buffer-create mail-util--apply-buffer))
+           (args (append (list "apply" "--plan" file (if real "--yes" "--dry-run"))
+                         (when (and real (equal mover "imap"))
+                           (append (list "--imap-host" mail-util-imap-host
+                                         "--imap-port" (number-to-string mail-util-imap-port))
+                                   (when mail-util-imap-user
+                                     (list "--imap-user" mail-util-imap-user))))
+                         (when (and real mail-util-mbsync-channel)
+                           (list "--mbsync-channel" mail-util-mbsync-channel)))))
     (with-temp-file file (insert json))
     (with-current-buffer buf
       (mail-util-apply-mode)
@@ -640,7 +649,7 @@ dry run that mutates nothing."
            (mail-util--apply-render)))
        (kill-buffer stderr-buf)
        (message "mail-util apply (%s) finished (status %s)"
-                (if real "REAL" "dry-run") status)))))
+                (if real "REAL" "dry-run") status))))))
 
 (defun mail-util-apply-dry-run ()
   "Dry-run the current plan (moves nothing)."

@@ -10,16 +10,17 @@ See `DESIGN.md` for the full design and the milestone roadmap.
 
 ## Status
 
-**M1–M4 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
+**M1–M5 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
 suggestions (`suggest`), a complete sorting plan with per-message move actions + a
 generated Sieve script (`plan`), a preflight check (`verify`), and a crash-safe `apply`
-engine with an append-only journal and no-loss invariants. Applying now has a **real
-server-side IMAP mover** (`UID MOVE` with a `COPY`+`EXPUNGE` fallback) that moves mail on
-the server and then reconciles the local cache with `mbsync`, verifying UIDVALIDITY is
-unchanged. `probe` reports the server's hierarchy separator and MOVE support. The Emacs UI
-drives the whole loop: review → plan → verify → dry-run → (guarded) real apply.
+engine with an append-only journal and no-loss invariants. Two movers are available:
+the default **server-side IMAP mover** (`UID MOVE` with a `COPY`+`EXPUNGE` fallback), and
+an opt-in **offline local mover** that rewrites the Maildir directly (fresh `,U=`-less
+filenames, copy-verify-then-delete). Both reconcile the local cache with `mbsync` and
+verify UIDVALIDITY is unchanged. `probe` reports the server's separator and MOVE support.
+The Emacs UI drives the whole loop: review → plan → verify → dry-run → (guarded) real apply.
 
-Remaining milestones: M5 offline local mover, M6 ManageSieve deployment + polish.
+Remaining milestone: M6 ManageSieve deployment + polish.
 
 ## Workspace layout
 
@@ -34,6 +35,7 @@ Remaining milestones: M5 offline local mover, M6 ManageSieve deployment + polish
 | `crates/mover` | the `Mover` trait plus `DryRunMover` and an in-memory `FakeMover` for safety tests (real IMAP/local movers are later) |
 | `crates/journal` | crash-safe apply engine, append-only journal, and the no-loss invariants |
 | `crates/imapmover` | server-side `Mover`: `ImapOps` trait, `ImapMover` logic, `FakeImapOps` for tests, and a real `imap`-crate backend (`real-imap` feature) + `.netrc` auth |
+| `crates/localmover` | offline `Mover`: rewrites the Maildir directly (fresh `,U=`-less names, copy-verify-then-delete) |
 | `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `probe`, `apply`) emitting JSON / NDJSON |
 
 ## Build & test
@@ -81,6 +83,11 @@ mail-util probe --imap-host imap.example.com --imap-user me@example.com
 # Requires --yes; credentials come from ~/.netrc (same machine line mbsync uses).
 mail-util apply --plan plan.json --yes \
   --imap-host imap.example.com --mbsync-channel <your-channel>
+
+# Offline alternative: build a plan for the local mover, then apply it without a
+# network (rewrites the Maildir directly, then mbsync propagates the moves).
+mail-util plan --mover local > plan.json
+mail-util apply --plan plan.json --yes --mbsync-channel <your-channel>
 ```
 
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
@@ -100,7 +107,8 @@ it at your binary and account root:
       ;; For probe / real apply:
       mail-util-imap-host "imap.example.com"
       mail-util-imap-user "me@example.com"       ; pick the account when a host is shared
-      mail-util-mbsync-channel "your-channel")   ; run after moves to reconcile
+      mail-util-mbsync-channel "your-channel"    ; run after moves to reconcile
+      mail-util-mover "imap")                    ; or "local" for the offline mover
 ```
 
 `M-x mail-util-probe` checks the server connection (read-only).

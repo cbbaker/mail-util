@@ -69,6 +69,55 @@ fn dry_run_streams_ndjson_and_moves_nothing() {
     assert!(!mc.root().join(".lists/.elixir").exists());
 }
 
+fn cur_names(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir.join("cur"))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn local_apply_moves_files_and_strips_uid() {
+    let mc = build_mock(); // 4 elixir list messages in .INBOX
+    let root = mc.root().to_str().unwrap();
+
+    // Plan targeting the offline local mover.
+    let out = Command::new(BIN)
+        .args(["--root", root, "plan", "--min-count", "3", "--mover", "local"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let plan = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(plan.path(), &out.stdout).unwrap();
+
+    // Real apply — no IMAP host, no mbsync channel (reconcile just checks UIDVALIDITY).
+    let out = Command::new(BIN)
+        .args(["--root", root, "apply", "--plan", plan.path().to_str().unwrap(), "--yes"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+    let records: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let done = records.iter().find(|r| r["event"] == "done").unwrap();
+    assert_eq!(done["moved"], 4);
+
+    // The four messages left the inbox and landed in the new folder…
+    assert_eq!(cur_names(&mc.root().join(".INBOX")).len(), 0);
+    let dst = cur_names(&mc.root().join(".lists/.elixir"));
+    assert_eq!(dst.len(), 4);
+    // …each with a fresh, ,U=-less filename (the anti-corruption invariant).
+    for name in &dst {
+        assert!(!name.contains(",U="), "moved file must not carry a ,U= UID: {name}");
+    }
+}
+
 #[test]
 fn refuses_real_apply_without_yes() {
     let mc = build_mock();

@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use journal::{apply_plan, JournalFile, JournalRecord, RecordSink, Tee};
 use imapmover::{netrc, ImapMover, ImapOps, RealImapOps};
+use localmover::LocalMover;
 use mailcache::{Account, FolderRef, UidValidity};
 use model::{
     Cluster, Config, FolderSpec, MoveAction, MoverKind, Plan, Precheck, SieveRule,
@@ -387,10 +388,18 @@ fn cmd_apply(
             anyhow::bail!("refusing to modify mail without --yes (or use --dry-run)");
         }
         match plan.mover {
-            MoverKind::Local => anyhow::bail!(
-                "the local (offline) mover is not implemented yet (arrives in M5); \
-                 re-run with --dry-run or --mover imap"
-            ),
+            MoverKind::Local => {
+                let account = Account::new(root);
+                let before = snapshot_uidvalidity(&account);
+                let root = root.clone();
+                let channel = mbsync_channel.map(str::to_string);
+                let mbsync_cmd = mbsync_cmd.to_string();
+                eprintln!("using the offline local Maildir mover");
+                let mover = LocalMover::new(&root).with_reconciler(move |touched| {
+                    reconcile_local(&mbsync_cmd, channel.as_deref(), &root, touched, &before)
+                });
+                Box::new(mover)
+            }
             MoverKind::Imap => {
                 let host = imap_host.ok_or_else(|| {
                     anyhow::anyhow!("a real IMAP apply needs --imap-host <server>")
