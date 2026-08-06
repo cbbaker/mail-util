@@ -416,17 +416,24 @@ Return the file path, or nil when no clusters are approved (plan everything)."
           (insert (json-serialize (list :approved (apply #'vector approved)))))
         file))))
 
-(defun mail-util-build-plan ()
+(defun mail-util-build-plan (&optional choose-mover)
   "Build a sorting plan and show it in `*mail-util-plan*'.
 Uses the approved clusters if any are marked, otherwise every surfaced
-cluster.  Run from the review buffer."
-  (interactive)
-  (let* ((approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
+cluster.  Run from the review buffer.
+
+The plan targets `mail-util-mover'.  With a prefix argument, prompt for the
+mover instead, so you can pick imap/local without touching the variable."
+  (interactive "P")
+  (let* ((mover (if choose-mover
+                    (completing-read "Mover: " '("imap" "local") nil t nil nil
+                                     (format "%s" mail-util-mover))
+                  ;; Coerce so a symbol value (e.g. `local) also works.
+                  (format "%s" mail-util-mover)))
+         (approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
          (args (append (list "plan") (mail-util--common-args)
-                       ;; Coerce to a string so a symbol value (e.g. `local) also works.
-                       (list "--mover" (format "%s" mail-util-mover))
+                       (list "--mover" mover)
                        (when approved-file (list "--approved" approved-file)))))
-    (message "mail-util: building plan …")
+    (message "mail-util: building plan (%s mover) …" mover)
     (mail-util--run-json
      args
      (lambda (plan)
