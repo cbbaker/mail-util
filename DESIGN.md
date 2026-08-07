@@ -103,4 +103,7 @@ Planned: `namemap`, `sieve`, `mover`, `journal`, and an Emacs front-end.
    auth), `probe` command, real `apply` with UIDVALIDITY-stability check.
 5. **M5 — offline local mover (done):** `localmover` crate (fresh `,U=`-less names,
    copy-verify-then-delete, idempotent), wired to `apply --mover local`.
-6. **M6 — Emacs review UI + ManageSieve deployment + LLM labeling.**
+6. **M6 — ManageSieve deployment (done):** `managesieve` crate (`SieveOps` trait +
+   `SieveDeployer` + `FakeSieveOps`, real RFC 5804 backend over STARTTLS/SASL PLAIN),
+   the `sieve` command (preview / `--deploy`), and Emacs `D`. (Optional local-LLM
+   cluster labeling remains a future enhancement, not required for the core loop.)

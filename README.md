@@ -10,17 +10,17 @@ See `DESIGN.md` for the full design and the milestone roadmap.
 
 ## Status
 
-**M1–M5 done.** The tool scans the Maildir, clusters the inbox, and produces ranked
-suggestions (`suggest`), a complete sorting plan with per-message move actions + a
-generated Sieve script (`plan`), a preflight check (`verify`), and a crash-safe `apply`
-engine with an append-only journal and no-loss invariants. Two movers are available:
-the default **server-side IMAP mover** (`UID MOVE` with a `COPY`+`EXPUNGE` fallback), and
-an opt-in **offline local mover** that rewrites the Maildir directly (fresh `,U=`-less
-filenames, copy-verify-then-delete). Both reconcile the local cache with `mbsync` and
-verify UIDVALIDITY is unchanged. `probe` reports the server's separator and MOVE support.
-The Emacs UI drives the whole loop: review → plan → verify → dry-run → (guarded) real apply.
-
-Remaining milestone: M6 ManageSieve deployment + polish.
+**All milestones (M1–M6) done.** The tool scans the Maildir, clusters the inbox, and
+produces ranked suggestions (`suggest`), a complete sorting plan with per-message move
+actions + a generated Sieve script (`plan`), a preflight check (`verify`), and a crash-safe
+`apply` engine with an append-only journal and no-loss invariants. Two movers are
+available: the default **server-side IMAP mover** (`UID MOVE` with a `COPY`+`EXPUNGE`
+fallback), and an opt-in **offline local mover** that rewrites the Maildir directly (fresh
+`,U=`-less filenames, copy-verify-then-delete). Both reconcile with `mbsync` and verify
+UIDVALIDITY is unchanged. `probe` reports the server's separator and MOVE support, and
+`sieve` deploys the generated rules to the server via **ManageSieve** (merging into your
+active script, preserving hand-written rules). The Emacs UI drives the whole loop:
+review → plan → verify → dry-run → (guarded) real apply → deploy sieve.
 
 ## Workspace layout
 
@@ -36,7 +36,8 @@ Remaining milestone: M6 ManageSieve deployment + polish.
 | `crates/journal` | crash-safe apply engine, append-only journal, and the no-loss invariants |
 | `crates/imapmover` | server-side `Mover`: `ImapOps` trait, `ImapMover` logic, `FakeImapOps` for tests, and a real `imap`-crate backend (`real-imap` feature) + `.netrc` auth |
 | `crates/localmover` | offline `Mover`: rewrites the Maildir directly (fresh `,U=`-less names, copy-verify-then-delete) |
-| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `probe`, `apply`) emitting JSON / NDJSON |
+| `crates/managesieve` | deploy Sieve rules via ManageSieve: `SieveOps` trait, `SieveDeployer` (fetch→merge→put→activate), `FakeSieveOps`, and a real RFC 5804 backend (`real-sieve`) |
+| `bin/mail-util` | CLI (`scan`, `suggest`, `plan`, `verify`, `probe`, `apply`, `sieve`) emitting JSON / NDJSON |
 
 ## Build & test
 
@@ -88,6 +89,11 @@ mail-util apply --plan plan.json --yes \
 # network (rewrites the Maildir directly, then mbsync propagates the moves).
 mail-util plan --mover local > plan.json
 mail-util apply --plan plan.json --yes --mbsync-channel <your-channel>
+
+# Sieve: preview the merged server script (read-only)…
+mail-util sieve --plan plan.json --imap-host imap.example.com | jq -r .merged
+# …then deploy it (uploads + activates; changes server-side filtering).
+mail-util sieve --plan plan.json --imap-host imap.example.com --deploy
 ```
 
 The inbox folder defaults to the Maildir++ convention `.INBOX`; override with
@@ -135,9 +141,20 @@ Sieve script. There:
 | `v` | verify the plan against the current cache (resolve every action) |
 | `d` | dry-run the plan — stream live journal progress into `*mail-util-apply*` |
 | `X` | **apply for real** — move mail server-side (prompts for confirmation first) |
+| `e` | **preview merged Sieve** — fetch your server script (read-only); the plan's Sieve section then shows the *merged* result (your rules + the tool's block) |
+| `E` | view your current server Sieve script (after a preview) |
 | `w` | write the Sieve script to a file |
+| `D` | **deploy Sieve** to the server via ManageSieve (prompts for confirmation) |
 | `s` | save the plan JSON to a file |
 | `q` | quit |
+
+When `mail-util-imap-host` is set, building a plan **automatically** fetches your live
+server script and shows the Sieve section as the *merged* result — exactly what `D` would
+upload — so you never see just the new rules in isolation. (`e` re-fetches on demand and
+opens the side-by-side comparison; set `mail-util-sieve-auto-merge` to nil to fetch only
+on `e`.) Merging **accumulates**: previously-deployed rules are kept, the new ones are
+added, and your hand-written rules outside the markers are never touched — deploying never
+overwrites.
 
 `d` runs `apply --dry-run` (moves nothing). `X` runs the real apply: it asks
 `REALLY move N messages on <host>?`, then moves them server-side via IMAP and reconciles

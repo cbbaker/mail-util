@@ -483,6 +483,7 @@ dependencies = [
  "journal",
  "localmover",
  "mailcache",
+ "managesieve",
  "mockcache",
  "model",
  "mover",
@@ -505,6 +506,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "walkdir",
+]
+
+[[package]]
+name = "managesieve"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "model",
+ "native-tls",
+ "sieve",
 ]
 
 [[package]]
