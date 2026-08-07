@@ -127,6 +127,7 @@ buffer:
 | `n` / `p` | move between clusters |
 | `a` / `r` / `u` | approve / reject / unset the cluster at point |
 | `A` | approve all high-confidence clusters |
+| `e` | edit the destination folder for the cluster at point (used when the plan is built) |
 | `TAB` | toggle sample senders/subjects |
 | `P` | build a plan from the approved clusters (or all, if none marked) |
 | `g` | re-run analysis (keeps your marks by cluster key) |

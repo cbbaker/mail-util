@@ -95,6 +95,28 @@ fn verify_confirms_a_fresh_plan() {
 }
 
 #[test]
+fn destination_override_renames_the_folder() {
+    let mc = build_mock(); // 4 elixir list messages -> default dest .lists/.elixir
+    let overrides = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(overrides.path(), r#"{"elixir.groups.io": ".archive/.my-list"}"#).unwrap();
+
+    let plan = run_json(
+        mc.root(),
+        &["plan", "--min-count", "3", "--overrides", overrides.path().to_str().unwrap()],
+    );
+
+    let folders = plan["folders_to_create"].as_array().unwrap();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0]["dotpath"], ".archive/.my-list");
+    assert_eq!(folders[0]["imap_name"], "archive.my-list");
+    for a in plan["actions"].as_array().unwrap() {
+        assert_eq!(a["dst_dotpath"], ".archive/.my-list");
+        assert_eq!(a["dst_imap"], "archive.my-list");
+    }
+    assert!(plan["sieve_text"].as_str().unwrap().contains(r#"fileinto "archive.my-list";"#));
+}
+
+#[test]
 fn approved_filter_restricts_to_selected_clusters() {
     let mc = mockcache::MockCache::new();
     for uid in 1..=4u32 {

@@ -119,6 +119,9 @@ always reflects what would actually be deployed. Set nil to fetch only on `e'."
   "Hash table mapping cluster index to `approved' or `rejected'.")
 (defvar-local mail-util--expanded nil
   "Hash table mapping cluster index to non-nil when details are shown.")
+(defvar-local mail-util--dest-overrides nil
+  "Hash table mapping cluster KEY to an edited destination dotpath.
+Keyed by cluster key (not index), so it survives a refresh.")
 
 (defconst mail-util--review-buffer "*mail-util-review*")
 
@@ -202,11 +205,17 @@ prepended from `mail-util-root' when set."
     ('rejected (propertize "R" 'face 'mail-util-rejected))
     (_ " ")))
 
+(defun mail-util--cluster-override (cluster)
+  "Return the edited destination dotpath for CLUSTER, or nil."
+  (and (hash-table-p mail-util--dest-overrides)
+       (gethash (alist-get 'key cluster) mail-util--dest-overrides)))
+
 (defun mail-util--insert-cluster (index cluster)
   "Insert the line(s) for CLUSTER at INDEX."
   (let* ((dest (mail-util--destination cluster))
-         (dotpath (car dest))
-         (existingp (cdr dest))
+         (override (mail-util--cluster-override cluster))
+         (dotpath (or override (car dest)))
+         (existingp (and (not override) (cdr dest)))
          (rejected (eq (mail-util--mark index) 'rejected))
          (start (point)))
     (insert
@@ -216,9 +225,9 @@ prepended from `mail-util-root' when set."
              (alist-get 'signal cluster)
              (alist-get 'confidence cluster)
              (propertize dotpath 'face 'mail-util-destination)
-             (concat (if existingp
-                         (propertize "  (existing)" 'face 'mail-util-approved)
-                       "")
+             (concat (cond (override (propertize "  (edited)" 'face 'mail-util-count))
+                           (existingp (propertize "  (existing)" 'face 'mail-util-approved))
+                           (t ""))
                      "   "
                      (propertize (format "(%s)" (alist-get 'key cluster))
                                  'face 'mail-util-key))))
@@ -255,7 +264,7 @@ prepended from `mail-util-root' when set."
                        approved rejected (- n approved rejected))
                'face 'shadow))
       (insert (propertize
-               "keys: n/p move · a/r/u approve/reject/unset · A all-high · TAB details · P plan · g refresh · x export · q quit\n\n"
+               "keys: n/p move · a/r/u approve/reject/unset · A all-high · e edit-folder · TAB details · P plan · g refresh · x export · q quit\n\n"
                'face 'shadow)))
     (dotimes (i (length mail-util--clusters))
       (mail-util--insert-cluster i (aref mail-util--clusters i)))
@@ -340,6 +349,25 @@ prepended from `mail-util-root' when set."
       (if (gethash index mail-util--expanded)
           (remhash index mail-util--expanded)
         (puthash index t mail-util--expanded))
+      (mail-util--render)
+      (mail-util--goto-index index))))
+
+(defun mail-util-edit-destination ()
+  "Edit the destination folder (dotpath) for the cluster at point.
+The edited name is used when building the plan.  Enter the default (or an
+empty string) to clear the override."
+  (interactive)
+  (let ((index (mail-util--index-at-point)))
+    (unless index (user-error "Point is not on a cluster"))
+    (let* ((cluster (aref mail-util--clusters index))
+           (key (alist-get 'key cluster))
+           (default (car (mail-util--destination cluster)))
+           (current (or (mail-util--cluster-override cluster) default))
+           (new (string-trim
+                 (read-string (format "Destination folder for %s (dotpath): " key) current))))
+      (if (or (string-empty-p new) (equal new default))
+          (remhash key mail-util--dest-overrides)
+        (puthash key new mail-util--dest-overrides))
       (mail-util--render)
       (mail-util--goto-index index))))
 
@@ -437,6 +465,17 @@ Return the file path, or nil when no clusters are approved (plan everything)."
           (insert (json-serialize (list :approved (apply #'vector approved)))))
         file))))
 
+(defun mail-util--overrides-file ()
+  "Write destination-folder overrides to a temp file for `plan --overrides'.
+Return the file path, or nil when nothing has been edited."
+  (when (and (hash-table-p mail-util--dest-overrides)
+             (> (hash-table-count mail-util--dest-overrides) 0))
+    (let ((obj (make-hash-table :test 'equal)))
+      (maphash (lambda (k v) (puthash k v obj)) mail-util--dest-overrides)
+      (let ((file (make-temp-file "mail-util-overrides" nil ".json")))
+        (with-temp-file file (insert (json-serialize obj)))
+        file))))
+
 (defun mail-util-build-plan (&optional choose-mover)
   "Build a sorting plan and show it in `*mail-util-plan*'.
 Uses the approved clusters if any are marked, otherwise every surfaced
@@ -451,14 +490,17 @@ mover instead, so you can pick imap/local without touching the variable."
                   ;; Coerce so a symbol value (e.g. `local) also works.
                   (format "%s" mail-util-mover)))
          (approved-file (and mail-util--clusters (mail-util--approved-keys-file)))
+         (overrides-file (and mail-util--clusters (mail-util--overrides-file)))
          (args (append (list "plan") (mail-util--common-args)
                        (list "--mover" mover)
-                       (when approved-file (list "--approved" approved-file)))))
+                       (when approved-file (list "--approved" approved-file))
+                       (when overrides-file (list "--overrides" overrides-file)))))
     (message "mail-util: building plan (%s mover) …" mover)
     (mail-util--run-json
      args
      (lambda (plan)
        (when approved-file (ignore-errors (delete-file approved-file)))
+       (when overrides-file (ignore-errors (delete-file overrides-file)))
        (mail-util--show-plan plan mail-util--last-json)))))
 
 (defun mail-util--show-plan (plan raw)
@@ -848,6 +890,7 @@ dry run that mutates nothing."
                  ("u" . mail-util-unset)
                  ("A" . mail-util-approve-all-high)
                  ("TAB" . mail-util-toggle-details)
+                 ("e" . mail-util-edit-destination)
                  ("P" . mail-util-build-plan)
                  ("g" . mail-util-refresh)
                  ("x" . mail-util-export-approved)
@@ -880,7 +923,8 @@ dry run that mutates nothing."
   "Major mode for reviewing mail-util sorting suggestions."
   (setq truncate-lines t)
   (setq mail-util--marks (make-hash-table :test 'eql))
-  (setq mail-util--expanded (make-hash-table :test 'eql)))
+  (setq mail-util--expanded (make-hash-table :test 'eql))
+  (setq mail-util--dest-overrides (make-hash-table :test 'equal)))
 
 (defun mail-util--load (data)
   "Populate buffer-local state from parsed JSON DATA.
