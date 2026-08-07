@@ -20,6 +20,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use journal::{apply_plan, JournalFile, JournalRecord, RecordSink, Tee};
 use imapmover::{netrc, ImapMover, ImapOps, RealImapOps};
 use localmover::LocalMover;
+use managesieve::{RealSieveOps, SieveDeployer};
 use mailcache::{Account, FolderRef, UidValidity};
 use model::{
     Cluster, Config, FolderSpec, MoveAction, MoverKind, Plan, Precheck, SieveRule,
@@ -126,6 +127,30 @@ enum Command {
         /// already contains records, completed actions are skipped (resume).
         #[arg(long)]
         journal: Option<PathBuf>,
+    },
+    /// Deploy a plan's Sieve rules to the server via ManageSieve (RFC 5804).
+    ///
+    /// Without `--deploy` it previews the merged script (read-only). `--deploy` uploads
+    /// and activates it, changing server-side filtering for future mail.
+    Sieve {
+        /// Path to a plan JSON file produced by `plan`.
+        #[arg(long)]
+        plan: PathBuf,
+        /// ManageSieve server hostname (usually the IMAP host; creds via ~/.netrc).
+        #[arg(long)]
+        imap_host: String,
+        /// Login to select the account when several share a host.
+        #[arg(long)]
+        imap_user: Option<String>,
+        /// ManageSieve port.
+        #[arg(long, default_value_t = 4190)]
+        sieve_port: u16,
+        /// Target script name (default: the active script, else "mail-util").
+        #[arg(long)]
+        script_name: Option<String>,
+        /// Actually upload and activate (otherwise just preview the merged script).
+        #[arg(long)]
+        deploy: bool,
     },
 }
 
@@ -267,7 +292,77 @@ fn main() -> Result<()> {
             mbsync_cmd,
             journal.as_ref(),
         ),
+        Command::Sieve {
+            plan,
+            imap_host,
+            imap_user,
+            sieve_port,
+            script_name,
+            deploy,
+        } => cmd_sieve(
+            plan,
+            imap_host,
+            imap_user.as_deref(),
+            *sieve_port,
+            script_name.as_deref(),
+            *deploy,
+        ),
     }
+}
+
+#[derive(Serialize)]
+struct SieveOutput {
+    script: String,
+    deployed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<bool>,
+    /// Present in preview mode: the merged script that would be uploaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merged: Option<String>,
+}
+
+fn cmd_sieve(
+    plan_path: &PathBuf,
+    host: &str,
+    user: Option<&str>,
+    port: u16,
+    script_name: Option<&str>,
+    deploy: bool,
+) -> Result<()> {
+    let text = std::fs::read_to_string(plan_path)
+        .with_context(|| format!("reading plan {}", plan_path.display()))?;
+    let plan: Plan = serde_json::from_str(&text).context("parsing plan JSON")?;
+
+    let auth = netrc::read_default(host, user)?;
+    eprintln!("connecting to ManageSieve {host}:{port} as {} …", auth.login);
+    let ops = RealSieveOps::connect(host, port, &auth.login, &auth.password)?;
+    let mut deployer = SieveDeployer::new(ops);
+
+    let out = if deploy {
+        let report = deployer.deploy(script_name, &plan.sieve_rules)?;
+        eprintln!("deployed {} ({} bytes) and set active", report.script, report.bytes);
+        SieveOutput {
+            script: report.script,
+            deployed: true,
+            bytes: Some(report.bytes),
+            created: Some(report.created),
+            merged: None,
+        }
+    } else {
+        let merged = deployer.preview(script_name, &plan.sieve_rules)?;
+        let script = script_name.map(str::to_string).unwrap_or_else(|| "(active)".to_string());
+        SieveOutput {
+            script,
+            deployed: false,
+            bytes: None,
+            created: None,
+            merged: Some(merged),
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
 }
 
 /// Connect (read-only) and report the server's hierarchy separator and MOVE capability.

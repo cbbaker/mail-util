@@ -77,6 +77,15 @@ first netrc entry for the host."
 the Maildir offline. A real apply reads this from the plan."
   :type '(choice (const "imap") (const "local")))
 
+(defcustom mail-util-sieve-port 4190
+  "ManageSieve port for deploying Sieve rules."
+  :type 'natnum)
+
+(defcustom mail-util-sieve-script nil
+  "Target Sieve script name to deploy into.
+Nil deploys into the account's active script (or \"mail-util\" if none)."
+  :type '(choice (const :tag "Active script" nil) string))
+
 ;;;; Faces
 
 (defface mail-util-approved '((t :inherit success))
@@ -470,7 +479,7 @@ mover instead, so you can pick imap/local without touching the variable."
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
       (insert (or (alist-get 'sieve_text plan) ""))
       (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
-      (insert (propertize "\nkeys: v verify · d dry-run · X apply-for-real · w write sieve · s save plan JSON · q quit\n"
+      (insert (propertize "\nkeys: v verify · d dry-run · X apply-for-real · w write sieve · D deploy sieve · s save plan · q quit\n"
                           'face 'shadow)))
     (goto-char (point-min))
     (pop-to-buffer (current-buffer))))
@@ -507,6 +516,46 @@ mover instead, so you can pick imap/local without touching the variable."
   (let ((json mail-util--plan-json))
     (with-temp-file file (insert json))
     (message "Wrote plan to %s" file)))
+
+(defun mail-util-deploy-sieve (&optional preview)
+  "Deploy the current plan's Sieve rules to the server via ManageSieve.
+With a prefix argument, only PREVIEW the merged script (read-only) in a
+`*mail-util-sieve*' buffer; otherwise upload and activate it after confirming."
+  (interactive "P")
+  (unless mail-util--plan-json (user-error "No plan in this buffer"))
+  (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
+  (unless preview
+    (unless (yes-or-no-p
+             (format "Deploy Sieve rules to %s? (changes server-side filtering) "
+                     mail-util-imap-host))
+      (user-error "Aborted")))
+  (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
+         (json mail-util--plan-json)
+         (args (append (list "sieve" "--plan" file
+                             "--imap-host" mail-util-imap-host
+                             "--sieve-port" (number-to-string mail-util-sieve-port))
+                       (when mail-util-imap-user (list "--imap-user" mail-util-imap-user))
+                       (when mail-util-sieve-script (list "--script-name" mail-util-sieve-script))
+                       (unless preview (list "--deploy")))))
+    (with-temp-file file (insert json))
+    (message "mail-util: %s Sieve on %s …"
+             (if preview "previewing" "deploying") mail-util-imap-host)
+    (mail-util--run-json
+     args
+     (lambda (res)
+       (ignore-errors (delete-file file))
+       (if preview
+           (with-current-buffer (get-buffer-create "*mail-util-sieve*")
+             (let ((inhibit-read-only t))
+               (erase-buffer)
+               (insert (or (alist-get 'merged res) ""))
+               (goto-char (point-min)))
+             (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
+             (view-mode 1)
+             (pop-to-buffer (current-buffer)))
+         (message "Sieve deployed to script %S (%s bytes, %s)"
+                  (alist-get 'script res) (alist-get 'bytes res)
+                  (if (alist-get 'created res) "created" "updated")))))))
 
 ;;;; Apply (dry-run) with live NDJSON progress
 
@@ -716,6 +765,7 @@ dry run that mutates nothing."
                  ("d" . mail-util-apply-dry-run)
                  ("X" . mail-util-apply-real)
                  ("w" . mail-util-write-sieve)
+                 ("D" . mail-util-deploy-sieve)
                  ("s" . mail-util-save-plan)
                  ("q" . quit-window)))
   (keymap-set mail-util-plan-mode-map key cmd))

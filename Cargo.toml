@@ -11,6 +11,7 @@ members = [
     "crates/journal",
     "crates/imapmover",
     "crates/localmover",
+    "crates/managesieve",
     "bin/mail-util",
 ]
 
@@ -39,3 +40,4 @@ mover = { path = "crates/mover" }
 journal = { path = "crates/journal" }
 imapmover = { path = "crates/imapmover" }
 localmover = { path = "crates/localmover" }
+managesieve = { path = "crates/managesieve" }

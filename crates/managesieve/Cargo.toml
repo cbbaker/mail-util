@@ -1,0 +1,16 @@
+[package]
+name = "managesieve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+model.workspace = true
+sieve.workspace = true
+anyhow.workspace = true
+native-tls = { version = "0.2", optional = true }
+
+[features]
+# The real, network-touching ManageSieve (RFC 5804) backend. Off by default so the
+# deployer logic builds and tests hermetically; the CLI turns it on.
+real-sieve = ["dep:native-tls"]
