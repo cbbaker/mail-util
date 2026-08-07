@@ -359,6 +359,8 @@ empty string) to clear the override."
   (interactive)
   (let ((index (mail-util--index-at-point)))
     (unless index (user-error "Point is not on a cluster"))
+    (unless (hash-table-p mail-util--dest-overrides)
+      (setq mail-util--dest-overrides (make-hash-table :test 'equal)))
     (let* ((cluster (aref mail-util--clusters index))
            (key (alist-get 'key cluster))
            (default (car (mail-util--destination cluster)))
@@ -936,7 +938,11 @@ whatever cluster now sits at that index."
   (setq mail-util--clusters (apply #'vector (alist-get 'clusters data)))
   (setq mail-util--meta data)
   (setq mail-util--marks (make-hash-table :test 'eql))
-  (setq mail-util--expanded (make-hash-table :test 'eql)))
+  (setq mail-util--expanded (make-hash-table :test 'eql))
+  ;; Destination overrides are keyed by cluster key, so they persist across a refresh
+  ;; — only create the table if it's missing (e.g. a buffer that predates this code).
+  (unless (hash-table-p mail-util--dest-overrides)
+    (setq mail-util--dest-overrides (make-hash-table :test 'equal))))
 
 ;;;###autoload
 (defun mail-util-review ()
