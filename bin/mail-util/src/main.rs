@@ -76,6 +76,9 @@ enum Command {
         /// Restrict the plan to clusters approved in this JSON file (the Emacs export).
         #[arg(long)]
         approved: Option<PathBuf>,
+        /// JSON object of cluster-key -> destination-dotpath overrides (edited folder names).
+        #[arg(long)]
+        overrides: Option<PathBuf>,
     },
     /// Re-check a plan against the current cache (read-only preflight).
     Verify {
@@ -241,6 +244,13 @@ fn read_approved_keys(path: &PathBuf) -> Result<HashSet<String>> {
     Ok(export.approved.into_iter().map(|a| a.key).collect())
 }
 
+/// Read a JSON object of cluster-key -> destination-dotpath overrides.
+fn read_overrides(path: &PathBuf) -> Result<HashMap<String, String>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading overrides file {}", path.display()))?;
+    serde_json::from_str(&text).context("parsing overrides JSON")
+}
+
 fn plan_id() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -263,7 +273,17 @@ fn main() -> Result<()> {
             mover,
             separator,
             approved,
-        } => cmd_plan(&account, &root, inbox, *min_count, (*mover).into(), *separator, approved.as_ref()),
+            overrides,
+        } => cmd_plan(
+            &account,
+            &root,
+            inbox,
+            *min_count,
+            (*mover).into(),
+            *separator,
+            approved.as_ref(),
+            overrides.as_ref(),
+        ),
         Command::Verify { plan } => cmd_verify(&account, plan),
         Command::Probe {
             imap_host,
@@ -616,6 +636,7 @@ fn cmd_plan(
     mover: MoverKind,
     separator: char,
     approved: Option<&PathBuf>,
+    overrides: Option<&PathBuf>,
 ) -> Result<()> {
     let config = build_config(min_count);
     let all = account.folders();
@@ -623,7 +644,23 @@ fn cmd_plan(
     eprintln!("scanning {} …", inbox_folder.dir.display());
     let messages = inbox_folder.messages();
     let existing = existing_folders(&all, inbox, &config);
-    let clusters = suggest::suggest(&messages, &existing, &config);
+    let mut clusters = suggest::suggest(&messages, &existing, &config);
+
+    // Apply user destination-folder overrides (edited names from the Emacs review).
+    if let Some(path) = overrides {
+        let map = read_overrides(path)?;
+        let existing_dotpaths: HashSet<&str> = all.iter().map(|f| f.dotpath.as_str()).collect();
+        for c in &mut clusters {
+            if let Some(dotpath) = map.get(&c.key) {
+                // Reuse the folder if it already exists, else create it.
+                c.destination = if existing_dotpaths.contains(dotpath.as_str()) {
+                    model::Destination::Existing { dotpath: dotpath.clone() }
+                } else {
+                    model::Destination::New { dotpath: dotpath.clone() }
+                };
+            }
+        }
+    }
 
     // Optionally restrict to approved cluster keys (from the Emacs export).
     let approved_keys = match approved {
