@@ -1,9 +1,14 @@
 //! `sieve` — render sorting rules to a Sieve (RFC 5228) script and merge them into an
 //! existing user script without disturbing hand-written rules.
 //!
-//! Generated rules are wrapped in a delimited, tool-managed block so re-running the tool
-//! replaces only its own output. A single `require` for the extensions we use is ensured
-//! at the top of the script (Sieve requires all `require`s before any other command).
+//! Generated rules live in a delimited, tool-managed block. Merging **accumulates**: the
+//! existing block's rules are kept and the new ones are added, deduplicated by rule logic
+//! (the message-count comment is ignored, so re-deploying an updated plan neither
+//! duplicates a rule nor drops previously-deployed ones). Everything outside the markers —
+//! hand-written rules — is preserved verbatim. A single `require` for the extensions we
+//! use is ensured at the top (Sieve requires all `require`s before any other command).
+
+use std::collections::HashMap;
 
 use model::{Cluster, Signal, SieveRule, SieveTest};
 
@@ -120,20 +125,36 @@ fn declares_fileinto(script: &str) -> bool {
         .any(|l| l.contains("fileinto"))
 }
 
-/// Merge generated `rules` into `existing`, replacing any prior tool-managed block and
-/// preserving all hand-written content. Ensures a `require ["fileinto"];` is present.
+/// Merge generated `rules` into `existing`, **accumulating** into the tool-managed block
+/// (keeping any rules already there) and preserving all hand-written content. Rules are
+/// deduplicated by their logic (comment ignored). Ensures a `require ["fileinto"];`.
 pub fn merge(existing: &str, rules: &[SieveRule]) -> String {
-    let block = render_managed_block(rules);
+    // Collect the managed block's rule chunks, keyed by logic-signature, in order.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_sig: HashMap<String, String> = HashMap::new();
+    let mut add = |chunk: String| {
+        let sig = rule_signature(&chunk);
+        if !by_sig.contains_key(&sig) {
+            order.push(sig.clone());
+        }
+        by_sig.insert(sig, chunk); // a later, matching rule refreshes the comment
+    };
+    if let Some(body) = extract_block_body(existing) {
+        for chunk in split_rules(&body) {
+            add(chunk);
+        }
+    }
+    for rule in rules {
+        add(render_rule(rule));
+    }
+    let chunks: Vec<String> = order.iter().map(|s| by_sig[s].clone()).collect();
+    let block = render_block_from_chunks(&chunks);
 
-    // Replace an existing managed block, or append a new one.
+    // Splice the rebuilt block over the old one, or append it, preserving everything else.
     let merged = match (existing.find(BEGIN_MARKER), existing.find(END_MARKER)) {
         (Some(b), Some(e)) if e > b => {
             let end = e + END_MARKER.len();
-            let mut s = String::new();
-            s.push_str(&existing[..b]);
-            s.push_str(&block);
-            s.push_str(&existing[end..]);
-            s
+            format!("{}{}{}", &existing[..b], block, &existing[end..])
         }
         _ => {
             let mut s = existing.trim_end().to_string();
@@ -151,6 +172,48 @@ pub fn merge(existing: &str, rules: &[SieveRule]) -> String {
     } else {
         format!("require [\"fileinto\"];\n\n{}", merged.trim_start())
     }
+}
+
+/// The rules body between the managed markers, trimmed, if a block is present.
+fn extract_block_body(script: &str) -> Option<String> {
+    let start = script.find(BEGIN_MARKER)? + BEGIN_MARKER.len();
+    let end = script[start..].find(END_MARKER)? + start;
+    Some(script[start..end].trim().to_string())
+}
+
+/// Split a managed-block body into individual rule chunks (rules are separated by a
+/// blank line, and never contain one internally).
+fn split_rules(body: &str) -> Vec<String> {
+    body.split("\n\n")
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+/// A rule's identity, ignoring `#` comment lines (so a changed message count doesn't
+/// look like a different rule). Whitespace is normalized.
+fn rule_signature(chunk: &str) -> String {
+    chunk
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_block_from_chunks(chunks: &[String]) -> String {
+    let mut s = String::new();
+    s.push_str(BEGIN_MARKER);
+    s.push('\n');
+    for (i, c) in chunks.iter().enumerate() {
+        if i > 0 {
+            s.push('\n');
+        }
+        s.push_str(c.trim());
+        s.push('\n');
+    }
+    s.push_str(END_MARKER);
+    s
 }
 
 #[cfg(test)]
@@ -216,21 +279,38 @@ mod tests {
     }
 
     #[test]
-    fn merge_preserves_handwritten_and_replaces_block() {
+    fn merge_accumulates_and_preserves_handwritten() {
         let r1 = rule_for_cluster(&cluster(Signal::ListId, "first"), "First");
         let existing = merge("require [\"fileinto\"];\n\n# my own rule\nif true { keep; }\n", &[r1]);
         assert!(existing.contains("# my own rule"));
 
-        // Re-merge with different rules: hand rule stays, managed block is replaced.
+        // Deploy a *different* rule later: the hand rule and the FIRST managed rule both
+        // stay, and the new one is added.
         let r2 = rule_for_cluster(&cluster(Signal::ListId, "second"), "Second");
         let out = merge(&existing, &[r2]);
         assert!(out.contains("# my own rule"), "hand-written rule preserved");
-        assert!(out.contains("second"), "new managed rule present");
-        assert!(!out.contains("\"first\""), "old managed rule removed: {out}");
-        // Exactly one managed block.
+        assert!(out.contains("\"first\""), "earlier managed rule kept: {out}");
+        assert!(out.contains("\"second\""), "new managed rule added");
+        // Still exactly one managed block, one require.
         assert_eq!(out.matches(BEGIN_MARKER).count(), 1);
-        // require not duplicated.
         assert_eq!(out.matches("require").count(), 1);
+    }
+
+    #[test]
+    fn merge_dedups_by_logic_ignoring_comment() {
+        // Same rule logic, but the comment (message count) differs between deploys.
+        let mut a = rule_for_cluster(&cluster(Signal::ListId, "l"), "L");
+        a.comment = Some("l (4 messages)".into());
+        let mut b = rule_for_cluster(&cluster(Signal::ListId, "l"), "L");
+        b.comment = Some("l (9 messages)".into());
+
+        let first = merge("", &[a]);
+        let second = merge(&first, &[b]);
+        // Not duplicated: only one `if` block for this rule.
+        assert_eq!(second.matches("if header").count(), 1, "{second}");
+        // The comment was refreshed to the latest count.
+        assert!(second.contains("l (9 messages)"));
+        assert!(!second.contains("l (4 messages)"));
     }
 
     #[test]
