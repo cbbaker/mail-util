@@ -409,6 +409,12 @@ the destination folders and message UIDs you approved."
   "Parsed plan alist shown in the current `*mail-util-plan*' buffer.")
 (defvar-local mail-util--plan-json nil
   "Raw plan JSON text backing the current plan buffer (for verify/save).")
+(defvar-local mail-util--plan-merged-sieve nil
+  "Merged Sieve script fetched from the server, or nil if not previewed yet.")
+(defvar-local mail-util--plan-existing-sieve nil
+  "The server's current Sieve script, fetched during a preview.")
+(defvar-local mail-util--plan-merged-script nil
+  "Name of the server script the merge targets.")
 
 (defconst mail-util--plan-buffer "*mail-util-plan*")
 
@@ -450,39 +456,62 @@ mover instead, so you can pick imap/local without touching the variable."
        (mail-util--show-plan plan mail-util--last-json)))))
 
 (defun mail-util--show-plan (plan raw)
-  "Render PLAN (parsed) with RAW json text into the plan buffer."
+  "Store PLAN (parsed) with RAW json text and render the plan buffer."
   (with-current-buffer (get-buffer-create mail-util--plan-buffer)
     (unless (derived-mode-p 'mail-util-plan-mode)
       (mail-util-plan-mode))
     (setq mail-util--plan plan
-          mail-util--plan-json raw)
-    (let ((inhibit-read-only t)
-          (pc (alist-get 'precheck plan)))
-      (erase-buffer)
-      (insert (propertize (format "mail-util plan %s\n" (alist-get 'plan_id plan)) 'face 'bold))
-      (insert (format "mover: %s   separator: %s   inbox: %s\n"
-                      (alist-get 'mover plan) (alist-get 'separator plan)
-                      (alist-get 'inbox plan)))
-      (insert (format "actions: %s   folders to create: %s   unresolved: %s   missing msg-id: %s\n\n"
-                      (alist-get 'actions pc)
-                      (length (alist-get 'folders_to_create plan))
-                      (alist-get 'actions_unresolved pc)
-                      (alist-get 'actions_missing_message_id pc)))
-      (insert (propertize "Folders to create\n" 'face 'bold))
-      (if (alist-get 'folders_to_create plan)
-          (dolist (f (alist-get 'folders_to_create plan))
-            (insert (format "  %s  →  %s\n"
-                            (propertize (alist-get 'dotpath f) 'face 'mail-util-destination)
-                            (alist-get 'imap_name f))))
-        (insert "  (none — all destinations already exist)\n"))
-      (insert (propertize "\nSieve script\n" 'face 'bold))
-      (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
-      (insert (or (alist-get 'sieve_text plan) ""))
-      (insert (propertize (make-string 64 ?─) 'face 'shadow) "\n")
-      (insert (propertize "\nkeys: v verify · d dry-run · X apply-for-real · w write sieve · D deploy sieve · s save plan · q quit\n"
-                          'face 'shadow)))
-    (goto-char (point-min))
+          mail-util--plan-json raw
+          mail-util--plan-merged-sieve nil
+          mail-util--plan-existing-sieve nil
+          mail-util--plan-merged-script nil)
+    (mail-util--render-plan)
     (pop-to-buffer (current-buffer))))
+
+(defun mail-util--render-plan ()
+  "Render the current plan buffer. Shows the server-merged Sieve if it has been
+fetched (via `mail-util-preview-sieve'), otherwise the generated block."
+  (let* ((plan mail-util--plan)
+         (pc (alist-get 'precheck plan))
+         (sep (concat (propertize (make-string 64 ?─) 'face 'shadow) "\n"))
+         (inhibit-read-only t))
+    (erase-buffer)
+    (insert (propertize (format "mail-util plan %s\n" (alist-get 'plan_id plan)) 'face 'bold))
+    (insert (format "mover: %s   separator: %s   inbox: %s\n"
+                    (alist-get 'mover plan) (alist-get 'separator plan)
+                    (alist-get 'inbox plan)))
+    (insert (format "actions: %s   folders to create: %s   unresolved: %s   missing msg-id: %s\n\n"
+                    (alist-get 'actions pc)
+                    (length (alist-get 'folders_to_create plan))
+                    (alist-get 'actions_unresolved pc)
+                    (alist-get 'actions_missing_message_id pc)))
+    (insert (propertize "Folders to create\n" 'face 'bold))
+    (if (alist-get 'folders_to_create plan)
+        (dolist (f (alist-get 'folders_to_create plan))
+          (insert (format "  %s  →  %s\n"
+                          (propertize (alist-get 'dotpath f) 'face 'mail-util-destination)
+                          (alist-get 'imap_name f))))
+      (insert "  (none — all destinations already exist)\n"))
+    (if mail-util--plan-merged-sieve
+        (progn
+          (insert (propertize
+                   (format "\nSieve — MERGED with server script %S (what D would deploy)\n"
+                           (or mail-util--plan-merged-script "?"))
+                   'face 'bold))
+          (insert sep)
+          (insert mail-util--plan-merged-sieve)
+          (insert sep)
+          (insert (propertize "your hand-written rules are preserved; only the mail-util block changes · E views the server script\n"
+                              'face 'shadow)))
+      (insert (propertize "\nSieve script (generated block — not yet merged with the server)\n" 'face 'bold))
+      (insert sep)
+      (insert (or (alist-get 'sieve_text plan) ""))
+      (insert sep)
+      (insert (propertize "press e to fetch your server script and preview the merged result\n"
+                          'face 'shadow)))
+    (insert (propertize "\nkeys: v verify · d dry-run · X apply · e preview-merged-sieve · D deploy sieve · w write · s save · q quit\n"
+                        'face 'shadow)))
+  (goto-char (point-min)))
 
 (defun mail-util-verify ()
   "Verify the plan in the current plan buffer against the cache."
@@ -517,45 +546,93 @@ mover instead, so you can pick imap/local without touching the variable."
     (with-temp-file file (insert json))
     (message "Wrote plan to %s" file)))
 
-(defun mail-util-deploy-sieve (&optional preview)
-  "Deploy the current plan's Sieve rules to the server via ManageSieve.
-With a prefix argument, only PREVIEW the merged script (read-only) in a
-`*mail-util-sieve*' buffer; otherwise upload and activate it after confirming."
-  (interactive "P")
+(defun mail-util--sieve-args (deploy)
+  "Build `mail-util sieve' args for the current plan; DEPLOY adds --deploy."
+  (append (list "--imap-host" mail-util-imap-host
+                "--sieve-port" (number-to-string mail-util-sieve-port))
+          (when mail-util-imap-user (list "--imap-user" mail-util-imap-user))
+          (when mail-util-sieve-script (list "--script-name" mail-util-sieve-script))
+          (when deploy (list "--deploy"))))
+
+(defun mail-util-preview-sieve ()
+  "Fetch the server's Sieve script and preview the merged result (read-only).
+Updates this plan buffer's Sieve section to the merged script and opens
+`*mail-util-sieve*' showing your current server script and the merged result.
+Uploads nothing."
+  (interactive)
   (unless mail-util--plan-json (user-error "No plan in this buffer"))
   (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
-  (unless preview
-    (unless (yes-or-no-p
-             (format "Deploy Sieve rules to %s? (changes server-side filtering) "
-                     mail-util-imap-host))
-      (user-error "Aborted")))
   (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
          (json mail-util--plan-json)
-         (args (append (list "sieve" "--plan" file
-                             "--imap-host" mail-util-imap-host
-                             "--sieve-port" (number-to-string mail-util-sieve-port))
-                       (when mail-util-imap-user (list "--imap-user" mail-util-imap-user))
-                       (when mail-util-sieve-script (list "--script-name" mail-util-sieve-script))
-                       (unless preview (list "--deploy")))))
+         (planbuf (current-buffer))
+         (args (append (list "sieve" "--plan" file) (mail-util--sieve-args nil))))
     (with-temp-file file (insert json))
-    (message "mail-util: %s Sieve on %s …"
-             (if preview "previewing" "deploying") mail-util-imap-host)
+    (message "mail-util: fetching server Sieve from %s …" mail-util-imap-host)
     (mail-util--run-json
      args
      (lambda (res)
        (ignore-errors (delete-file file))
-       (if preview
-           (with-current-buffer (get-buffer-create "*mail-util-sieve*")
-             (let ((inhibit-read-only t))
-               (erase-buffer)
-               (insert (or (alist-get 'merged res) ""))
-               (goto-char (point-min)))
-             (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
-             (view-mode 1)
-             (pop-to-buffer (current-buffer)))
-         (message "Sieve deployed to script %S (%s bytes, %s)"
-                  (alist-get 'script res) (alist-get 'bytes res)
-                  (if (alist-get 'created res) "created" "updated")))))))
+       (let ((existing (alist-get 'existing res))
+             (merged (alist-get 'merged res))
+             (script (alist-get 'script res)))
+         (when (buffer-live-p planbuf)
+           (with-current-buffer planbuf
+             (setq mail-util--plan-existing-sieve existing
+                   mail-util--plan-merged-sieve merged
+                   mail-util--plan-merged-script script)
+             (let ((inhibit-read-only t)) (mail-util--render-plan))))
+         (with-current-buffer (get-buffer-create "*mail-util-sieve*")
+           (let ((inhibit-read-only t))
+             (erase-buffer)
+             (insert (format "═══ Existing server script: %s ═══\n\n" script))
+             (insert (if (and existing (> (length existing) 0)) existing "(no script on the server yet)\n"))
+             (insert "\n\n═══ Merged — what D would deploy ═══\n\n")
+             (insert (or merged ""))
+             (goto-char (point-min)))
+           (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
+           (view-mode 1))
+         (display-buffer "*mail-util-sieve*")
+         (message "Fetched server Sieve (script %s); plan now shows the merged result" script))))))
+
+(defun mail-util-view-existing-sieve ()
+  "Show the server's current Sieve script (fetched by a prior preview)."
+  (interactive)
+  (unless mail-util--plan-existing-sieve
+    (user-error "Run `mail-util-preview-sieve' (e) first to fetch the server script"))
+  (with-current-buffer (get-buffer-create "*mail-util-sieve*")
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert (format "═══ Server script: %s ═══\n\n" (or mail-util--plan-merged-script "?")))
+      (insert (if (> (length mail-util--plan-existing-sieve) 0)
+                  mail-util--plan-existing-sieve
+                "(no script on the server yet)\n"))
+      (goto-char (point-min)))
+    (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
+    (view-mode 1)
+    (pop-to-buffer (current-buffer))))
+
+(defun mail-util-deploy-sieve ()
+  "Deploy the current plan's Sieve rules to the server (upload + activate).
+Prompts for confirmation. Preview first with `mail-util-preview-sieve' (e)."
+  (interactive)
+  (unless mail-util--plan-json (user-error "No plan in this buffer"))
+  (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
+  (unless (yes-or-no-p
+           (format "Deploy Sieve rules to %s? (changes server-side filtering) "
+                   mail-util-imap-host))
+    (user-error "Aborted"))
+  (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
+         (json mail-util--plan-json)
+         (args (append (list "sieve" "--plan" file) (mail-util--sieve-args t))))
+    (with-temp-file file (insert json))
+    (message "mail-util: deploying Sieve on %s …" mail-util-imap-host)
+    (mail-util--run-json
+     args
+     (lambda (res)
+       (ignore-errors (delete-file file))
+       (message "Sieve deployed to script %S (%s bytes, %s)"
+                (alist-get 'script res) (alist-get 'bytes res)
+                (if (alist-get 'created res) "created" "updated"))))))
 
 ;;;; Apply (dry-run) with live NDJSON progress
 
@@ -764,6 +841,8 @@ dry run that mutates nothing."
                '(("v" . mail-util-verify)
                  ("d" . mail-util-apply-dry-run)
                  ("X" . mail-util-apply-real)
+                 ("e" . mail-util-preview-sieve)
+                 ("E" . mail-util-view-existing-sieve)
                  ("w" . mail-util-write-sieve)
                  ("D" . mail-util-deploy-sieve)
                  ("s" . mail-util-save-plan)

@@ -141,10 +141,16 @@ Sieve script. There:
 | `v` | verify the plan against the current cache (resolve every action) |
 | `d` | dry-run the plan — stream live journal progress into `*mail-util-apply*` |
 | `X` | **apply for real** — move mail server-side (prompts for confirmation first) |
+| `e` | **preview merged Sieve** — fetch your server script (read-only); the plan's Sieve section then shows the *merged* result (your rules + the tool's block) |
+| `E` | view your current server Sieve script (after a preview) |
 | `w` | write the Sieve script to a file |
-| `D` | **deploy Sieve** to the server via ManageSieve (prompts; `C-u D` previews read-only) |
+| `D` | **deploy Sieve** to the server via ManageSieve (prompts for confirmation) |
 | `s` | save the plan JSON to a file |
 | `q` | quit |
+
+The plan's Sieve section starts as the *generated* rule block. Press `e` to fetch your
+live server script and merge — the section updates to show exactly what `D` would upload,
+with your hand-written rules preserved (only the delimited `mail-util` block changes).
 
 `d` runs `apply --dry-run` (moves nothing). `X` runs the real apply: it asks
 `REALLY move N messages on <host>?`, then moves them server-side via IMAP and reconciles

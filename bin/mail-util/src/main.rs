@@ -321,6 +321,9 @@ struct SieveOutput {
     /// Present in preview mode: the merged script that would be uploaded.
     #[serde(skip_serializing_if = "Option::is_none")]
     merged: Option<String>,
+    /// Present in preview mode: the current server-side script (empty if none exists).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existing: Option<String>,
 }
 
 fn cmd_sieve(
@@ -349,16 +352,17 @@ fn cmd_sieve(
             bytes: Some(report.bytes),
             created: Some(report.created),
             merged: None,
+            existing: None,
         }
     } else {
-        let merged = deployer.preview(script_name, &plan.sieve_rules)?;
-        let script = script_name.map(str::to_string).unwrap_or_else(|| "(active)".to_string());
+        let preview = deployer.preview_full(script_name, &plan.sieve_rules)?;
         SieveOutput {
-            script,
+            script: preview.script,
             deployed: false,
             bytes: None,
             created: None,
-            merged: Some(merged),
+            merged: Some(preview.merged),
+            existing: Some(preview.existing.unwrap_or_default()),
         }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);

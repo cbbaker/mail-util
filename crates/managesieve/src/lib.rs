@@ -27,6 +27,15 @@ pub trait SieveOps {
     fn set_active(&mut self, name: &str) -> Result<()>;
 }
 
+/// The result of a read-only preview: the target script name, its current server-side
+/// contents (`None` if it doesn't exist yet), and the merged script that would be uploaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SievePreview {
+    pub script: String,
+    pub existing: Option<String>,
+    pub merged: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeployReport {
     /// The script that was written and activated.
@@ -58,9 +67,24 @@ impl<O: SieveOps> SieveDeployer<O> {
 
     /// Compute the merged script that would be deployed, without uploading anything.
     pub fn preview(&mut self, preferred: Option<&str>, rules: &[SieveRule]) -> Result<String> {
-        let target = self.target(preferred)?;
-        let existing = self.ops.get_script(&target)?.unwrap_or_default();
-        Ok(sieve::merge(&existing, rules))
+        Ok(self.preview_full(preferred, rules)?.merged)
+    }
+
+    /// Like [`preview`](Self::preview), but also returns the target script name and its
+    /// current server-side contents, so a UI can show existing vs. merged.
+    pub fn preview_full(
+        &mut self,
+        preferred: Option<&str>,
+        rules: &[SieveRule],
+    ) -> Result<SievePreview> {
+        let script = self.target(preferred)?;
+        let existing = self.ops.get_script(&script)?;
+        let merged = sieve::merge(existing.as_deref().unwrap_or(""), rules);
+        Ok(SievePreview {
+            script,
+            existing,
+            merged,
+        })
     }
 
     /// Fetch → merge → upload → activate. Returns what was written.
