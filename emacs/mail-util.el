@@ -600,6 +600,12 @@ fetched (via `mail-util-preview-sieve'), otherwise the generated block."
     (with-temp-file file (insert json))
     (message "Wrote plan to %s" file)))
 
+(defun mail-util--account-desc ()
+  "A short \"host[ as user]\" description of the current server account."
+  (if mail-util-imap-user
+      (format "%s as %s" mail-util-imap-host mail-util-imap-user)
+    (format "%s" mail-util-imap-host)))
+
 (defun mail-util--sieve-args (deploy)
   "Build `mail-util sieve' args for the current plan; DEPLOY adds --deploy."
   (append (list "--imap-host" mail-util-imap-host
@@ -618,7 +624,7 @@ gracefully — on any error the plan keeps showing the generated block."
            (file (make-temp-file "mail-util-plan" nil ".json"))
            (args (append (list "sieve" "--plan" file) (mail-util--sieve-args nil))))
       (with-temp-file file (insert json))
-      (message "mail-util: fetching server Sieve from %s …" mail-util-imap-host)
+      (message "mail-util: fetching server Sieve from %s …" (mail-util--account-desc))
       (mail-util--run-json
        args
        (lambda (res)
@@ -680,13 +686,13 @@ Prompts for confirmation. Preview first with `mail-util-preview-sieve' (e)."
   (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
   (unless (yes-or-no-p
            (format "Deploy Sieve rules to %s? (changes server-side filtering) "
-                   mail-util-imap-host))
+                   (mail-util--account-desc)))
     (user-error "Aborted"))
   (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
          (json mail-util--plan-json)
          (args (append (list "sieve" "--plan" file) (mail-util--sieve-args t))))
     (with-temp-file file (insert json))
-    (message "mail-util: deploying Sieve on %s …" mail-util-imap-host)
+    (message "mail-util: deploying Sieve on %s …" (mail-util--account-desc))
     (mail-util--run-json
      args
      (lambda (res)
@@ -860,7 +866,7 @@ dry run that mutates nothing."
   "Probe the IMAP server for its hierarchy separator and MOVE capability."
   (interactive)
   (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
-  (message "mail-util: probing %s …" mail-util-imap-host)
+  (message "mail-util: probing %s …" (mail-util--account-desc))
   (mail-util--run-json
    (append (list "probe" "--imap-host" mail-util-imap-host
                  "--imap-port" (number-to-string mail-util-imap-port))

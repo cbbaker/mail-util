@@ -1,0 +1,772 @@
+require ["fileinto","copy","imap4flags"];
+
+# rule:[onmicrosoft]
+if allof (header :contains "From" "onmicrosoft.com")
+{
+  fileinto "vendors.onmicrosoft";
+  stop;
+}
+
+# rule:[mlblists]
+if allof (header :contains "From" "mlblists.com")
+{
+  fileinto "spam";
+  stop;
+}
+
+# rule:[mom]
+if allof (header :contains "From" "baker@cse.ucla.edu")
+{
+	fileinto "people.mom";
+	stop;
+}
+# rule:[harry]
+if allof (header :contains "From" "honeil@usc.edu")
+{
+  fileinto "people.harry";
+  stop;
+}
+# rule:[brooksbrothers]
+if allof (header :contains "From" "brooksbrothers.com")
+{
+	fileinto "vendors.brooksbrothers";
+	stop;
+}
+# rule:[amazon]
+if allof (header :contains "From" "@amazon.com")
+{
+	fileinto "vendors.amazon";
+	stop;
+}
+# rule:[github]
+if header :contains "From" "@github.com"
+{
+	fileinto "vendors.github";
+	stop;
+}
+# rule:[linkedin]
+if anyof (header :contains "From" "@linkedin.com", header :contains "From" "@e.linkedin.com")
+{
+	fileinto "vendors.linkedin";
+	stop;
+}
+
+# rule:[meetup]
+if allof (header :contains "From" "@meetup.com")
+{
+	fileinto "vendors.meetup";
+	stop;
+}
+# rule:[cepr]
+if allof (header :contains "From" "cepr@cepr.net")
+{
+	fileinto "lists.err";
+	stop;
+}
+# rule:[dad]
+if allof (header :contains "From" "bakerpe38@yahoo.com")
+{
+	fileinto "people.dad";
+	stop;
+}
+# rule:[polly]
+if allof (header :contains "From" "hrhpolly@gmail.com")
+{
+	fileinto "people.polly";
+	stop;
+}
+# rule:[gclist]
+if allof (header :contains "To" "gclist@iecc.com")
+{
+	fileinto "lists.gclist";
+	stop;
+}
+# rule:[spam]
+if anyof (exists "X-Spam-Flag", header :contains "X-Spam" "Yes")
+{
+	fileinto "spam";
+	stop;
+}
+if anyof (header :contains "X-Spam" "Yes")
+{
+	fileinto "spam";
+	stop;
+}
+# rule:[recruiter]
+if allof (header :contains "From" "jake@sparrowassoc.com")
+{
+	fileinto "spam";
+	stop;
+}
+# rule:[digital-ocean]
+if anyof (header :contains "From" "digitalocean.com")
+{
+	fileinto "vendors.digital-ocean";
+	stop;
+}
+# rule:[sparkfun]
+if allof (header :contains "From" "@sparkfun.com")
+{
+	fileinto "vendors.sparkfun";
+	stop;
+}
+# rule:[thinkgeek]
+if anyof (header :contains "From" "@email.thinkgeek.com", header :contains "From" "@thinkgeek.com")
+{
+	fileinto "vendors.thinkgeek";
+	stop;
+}
+# rule:[strava]
+if anyof (header :contains "From" "strava.com")
+{
+	fileinto "vendors.strava";
+	stop;
+}
+# rule:[christa]
+if anyof (header :contains "From" "cas@1939worldsfair.com", header :contains "From" "beehaus@gmail.com")
+{
+	fileinto "people.christa";
+	stop;
+}
+# rule:[richard-spam]
+if anyof (header :contains "From" "tours@esotouric.com", header :contains "From" "esotouric@substack.com")
+{
+	fileinto "vendors.richard-spam";
+	stop;
+}
+# rule:[facebook]
+if allof (header :contains "From" "@facebookmail.com")
+{
+	fileinto "vendors.facebook";
+	stop;
+}
+# rule:[chase-reminder]
+if allof (header :contains "From" "chase.com", 
+          header :contains "To" "electro@1939worldsfair.com")
+{
+	fileinto "vendors.chase";
+	stop;
+}
+# rule:[pinterest]
+if allof (header :contains "To" "pins@1939worldsfair.com")
+{
+	fileinto "vendors.pinterest";
+	stop;
+}
+# rule:[twitter]
+if allof (header :contains "To" "twitter@1939worldsfair.com")
+{
+	fileinto "vendors.twitter";
+	stop;
+}
+# rule:[metro]
+if anyof (header :contains "To" "donotreply@public.govdelivery.com",
+	  header :contains "From" "donotreply@public.govdelivery.com",
+	  header :contains "From" "@metro.net")
+{
+	fileinto "vendors.metro";
+	stop;
+}
+# rule:[foursquare]
+if allof (header :contains "From" "noreply@foursquare.com")
+{
+	fileinto "vendors.foursquare";
+	stop;
+}
+# rule:[radisson]
+if allof (header :contains "From" "carlsonhotels@email.carlsonhotels.com")
+{
+	fileinto "vendors.radisson";
+	stop;
+}
+# rule:[chase]
+if anyof (header :contains "From" "@email.chase.com",
+          header :contains "From" "@e.chase.com")
+{
+	fileinto "vendors.chase";
+	stop;
+}
+# rule:[vanguard]
+if anyof (header :contains "From" "@eonline.evanguard.com", header :contains "From" "@eonline.e-vanguard.com", header :contains "From" "vanguardinvestments@vanguard.com")
+{
+	fileinto "vendors.vanguard";
+	stop;
+}
+# rule:[uber]
+if anyof (header :contains "From" "@uber.com", header :contains "From" "@et.uber.com")
+{
+	fileinto "vendors.uber";
+	stop;
+}
+# rule:[helens-cycles]
+if anyof (header :contains "From" "@helenscycles.com", header :contains "From" "@trekbikes.com")
+{
+	fileinto "vendors.helens-cycles";
+	stop;
+}
+# rule:[apple-id]
+if allof (header :contains "From" "@id.apple.com")
+{
+	fileinto "vendors.apple";
+	stop;
+}
+# rule:[apple]
+if allof (header :contains "To" "apple@1939worldsfair.com")
+{
+	fileinto "vendors.apple";
+	stop;
+}
+# rule:[netflix]
+if allof (header :contains "To" "netflix@1939worldsfair.com")
+{
+	fileinto "vendors.netflix";
+	stop;
+}
+# rule:[mint]
+if allof (header :contains "From" "team@mint.com")
+{
+	fileinto "vendors.mint";
+	stop;
+}
+# rule:[opentable]
+if anyof (header :contains "From" "opentable.com", header :contains "From" "emails.opentable.com")
+{
+	fileinto "vendors.opentable";
+	stop;
+}
+# rule:[lapl]
+if allof (header :contains "From" ".lapl.org")
+{
+	fileinto "vendors.lapl";
+	stop;
+}
+# rule:[opscode]
+if allof (header :contains "From" "@chef.io")
+{
+	fileinto "vendors.opscode";
+	stop;
+}
+# rule:[htc]
+if allof (header :contains "From" "@email-htc.com")
+{
+	fileinto "vendors.htc";
+	stop;
+}
+# rule:[oreilly]
+if anyof (header :contains "From" "oreilly.com",
+					header :contains "From" "@e.safaribooksonline.com")
+{
+	fileinto "vendors.oreilly";
+	stop;
+}
+# rule:[supdup]
+if allof (header :contains "From" "info@campsuperduper.com")
+{
+	fileinto "vendors.supdup";
+	stop;
+}
+# rule:[unnc]
+if allof (header :contains "From" "@unnc.org")
+{
+	fileinto "vendors.unnc";
+	stop;
+}
+# rule:[synology]
+if anyof (header :contains "From" "notification@synology.com", header :contains "From" "@synologynotification.com")
+{
+	fileinto "vendors.synology";
+	stop;
+}
+# rule:[tinyletter]
+if allof (header :contains "To" "tinyletter@1939worldsfair.com")
+{
+	fileinto "lists.tinyletter";
+	stop;
+}
+# rule:[rei]
+if allof (header :contains "From" "notices.rei.com")
+{
+	fileinto "vendors.rei";
+	stop;
+}
+# rule:[fitbit]
+if allof (header :contains "From" "fitbit.com")
+{
+	fileinto "vendors.fitbit";
+	stop;
+}
+# rule:[coursera]
+if allof (header :contains "From" "coursera.org")
+{
+	fileinto "vendors.coursera";
+	stop;
+}
+# rule:[leaf-notifications]
+if allof (header :contains "Subject" "Nissan LEAF update", header :contains "From" "nissanusa.com")
+{
+	fileinto "lists.leaf";
+	stop;
+}
+# rule:[mcpro]
+if allof (header :contains "From" "@mcprohosting.com")
+{
+        fileinto "vendors.mcprohosting";
+	stop;
+}
+# rule:[namecheap]
+if allof (header :contains "From" "@namecheap.com")
+{
+        fileinto "vendors.namecheap";
+	stop;
+}
+# rule:[nextdoor]
+if allof (header :contains "From" "nextdoor.com")
+{
+  fileinto "vendors.nextdoor";
+  stop;
+}
+# rule:[instagram]
+if allof (header :contains "From" "instagram.com")
+{
+  fileinto "vendors.instagram";
+  stop;
+}
+# rule:[udacity]
+if allof (header :contains "From" "udacity.com")
+{
+  fileinto "vendors.udacity";
+  stop;
+}
+# rule:[etsy]
+if allof (header :contains "From" "etsy.com")
+{
+  fileinto "vendors.etsy";
+  stop;
+}
+# rule:[airbnb]
+if anyof (header :contains "From" "airbnb.com",
+	  header :contains "From" "airbnbmail.com")
+{
+  fileinto "vendors.airbnb";
+  stop;
+}
+if anyof (header :contains "From" "candicebkahn@gmail.com",
+          header :contains "From" "@larchmontcharter.org")
+{
+  fileinto "vendors.lcs";
+  stop;
+}
+# rule:[customink]
+if allof (header :contains "From" "customink.com")
+{
+  fileinto "vendors.customink";
+  stop;
+}
+# rule:[heroku]
+if allof (header :contains "From" "@heroku.com")
+{
+  fileinto "vendors.heroku";
+  stop;
+}
+# rule:[tumblr]
+if allof (header :contains "To" "tumblr@1939worldsfair.com")
+{
+	fileinto "vendors.tumblr";
+	stop;
+}
+# rule:[docker]
+if allof (header :contains "From" "@notify.docker.com")
+{
+	fileinto "vendors.docker";
+	stop;
+}
+# rule:[pebble]
+if allof (header :contains "From" "@pebble.com")
+{
+	fileinto "vendors.pebble";
+	stop;
+}
+# rule:[aetna]
+if allof (header :contains "From" "aetna.com")
+{
+	fileinto "vendors.aetna";
+	stop;
+}
+# rule:[hbo]
+if anyof (
+  header :contains "From" "updates.hbonow.com",
+  header :contains "From" "hbonow.com",
+  header :contains "From" "mail.hbomax.com"
+  )
+{
+	fileinto "vendors.hbo";
+	stop;
+}
+
+# rule:[ebay]
+if allof (header :contains "From" ".ebay.com")
+{
+	fileinto "vendors.ebay";
+	stop;
+}
+# rule:[orbitz]
+if allof (header :contains "From" ".orbitz.com")
+{
+	fileinto "vendors.orbitz";
+	stop;
+}
+# rule:[yelp]
+if allof (header :contains "From" "yelp.com")
+{
+	fileinto "vendors.yelp";
+	stop;
+}
+# rule:[urban-sitter]
+if allof (header :contains "From" "@urbansitter.com")
+{
+	fileinto "vendors.urban-sitter";
+	stop;
+}
+# rule:[kcrw]
+if allof (header :contains "From" "kcrw.org")
+{
+	fileinto "vendors.kcrw";
+	stop;
+}
+# rule:[ifttt]
+if allof (header :contains "From" "@ifttt.com")
+{
+	fileinto "vendors.ifttt";
+	stop;
+}
+
+# rule:[catalina-express]
+if allof (header :contains "From" "@catalinaexpress.com")
+{
+	fileinto "vendors.catalina-express";
+	stop;
+}
+
+# rule:[wells-fargo]
+if allof (header :contains "From" "wellsfargo.com")
+{
+	fileinto "vendors.wells-fargo";
+	stop;
+}
+
+
+# rule:[stitchfix]
+if allof (header :contains "From" "stitchfix.com")
+{
+	fileinto "vendors.stitchfix";
+	stop;
+}
+
+# rule:[pandora]
+if allof (header :contains "From" "pandora.com")
+{
+	fileinto "vendors.pandora";
+	stop;
+}
+
+# rule:[concerts]
+if anyof (header :contains "From" "livenation.com",
+					header :contains "From" "bandsintown.com",
+					header :contains "From" "ahbsp-ln.com",
+					header :contains "From" "goldenvoice.com")
+{
+	fileinto "vendors.pandora";
+	stop;
+}
+
+# rule:[cable]
+if allof (header :contains "To" "cable@1939worldsfair.com")
+{
+	fileinto "vendors.timewarner";
+	stop;
+}
+
+# rule:[kuhl]
+if allof (header :contains "From" "kuhl.com")
+{
+  fileinto "vendors.kuhl";
+  stop;
+}
+
+# rule:[banggood]
+if allof (header :contains "From" "banggood.com")
+{
+  fileinto "vendors.banggood";
+  stop;
+}
+
+# rule:[circleci]
+if allof (header :contains "From" "circleci.com")
+{
+  fileinto "vendors.circle-ci";
+  stop;
+}
+
+# rule:[elixir]
+if allof (header :contains "From" "@elixir-radar.com")
+{
+  fileinto "lists.elixir";
+  stop;
+}
+
+# rule:[gmb-fitness]
+if allof (header :contains "From" "@gmb.io")
+{
+  fileinto "vendors.gmb-fitness";
+  stop;
+}
+
+# rule:[arclight]
+if allof (header :contains "From" "@member.arclightcinemas.com")
+{
+  fileinto "vendors.arclight";
+  stop;
+}
+
+# rule:[staples]
+if allof (header :contains "From" "staples.com")
+{
+  fileinto "vendors.staples";
+  stop;
+}
+
+# rule:[atlantic]
+if allof (header :contains "From" "theatlantic.com")
+{
+  fileinto "vendors.atlantic";
+  stop;
+}
+
+# rule:[blick]
+if allof (header :contains "From" "dickblick.com")
+{
+  fileinto "vendors.blick";
+  stop;
+}
+
+# rule:[chernin]
+if allof (header :contains "From" "jeffreychernin.com")
+{
+  fileinto "vendors.chernin";
+  stop;
+}
+
+# rule:[casey]
+if allof (header :contains "From" "casey.seyb@gmail.com")
+{
+  fileinto "people.casey";
+  stop;
+}
+
+# rule:[matt-levine]
+if allof (header :contains "From" "Matt Levine")
+{
+  fileinto "lists.matt-levine";
+  stop;
+}
+
+# rule:[venmo]
+if allof (header :contains "From" "venmo.com")
+{
+  fileinto "vendors.venmo";
+  stop;
+}
+
+# rule:[redcross]
+if allof (header :contains "From" "redcrossblood.org")
+{
+  fileinto "vendors.redcross";
+  stop;
+}
+
+# rule:[etrade]
+if allof (header :contains "From" "etrade.com")
+{
+  fileinto "vendors.etrade";
+  stop;
+}
+
+# rule:[skirball]
+if allof (header :contains "From" "skirball.org")
+{
+  fileinto "vendors.skirball";
+  stop;
+}
+
+# rule:[pragprog]
+if allof (header :contains "From" "pragprog.com")
+{
+  fileinto "vendors.pragprog";
+  stop;
+}
+
+# rule:[lacounty-library]
+if allof (header :contains "From" "library.lacounty.gov")
+{
+  fileinto "vendors.lacounty-library";
+  stop;
+}
+
+# rule:[usa-climbing]
+if allof (header :contains "From" "usaclimbing.org")
+{
+  fileinto "vendors.usaclimbing";
+  stop;
+}
+
+# rule:[collegeboard]
+if allof (header :contains "From" "collegeboard@e.collegeboard.org")
+{
+  fileinto "vendors.collegeboard";
+  stop;
+}
+
+# rule:[sender-one]
+if allof (header :contains "From" "senderoneclimbing.com")
+{
+  fileinto "vendors.sender-one";
+  stop;
+}
+# rule:[hancock-park-vet]
+if allof (header :contains "From" "hancockparkveterinaryclinic@communications.pethealthnetwork.com")
+{
+  fileinto "vendors.hancock-park-vet";
+  stop;
+}
+# rule:[parentsquare]
+if allof (header :contains "From" "parentsquare.com")
+{
+  fileinto "vendors.lcs";
+  stop;
+}
+# rule:[kanopy]
+if allof (header :contains "From" "mail.kanopy.com")
+{
+  fileinto "vendors.kanopy";
+  stop;
+}
+# rule:[richard]
+if allof (header :contains "From" "schavester@gmail.com")
+{
+  fileinto "people.richard";
+  stop;
+}
+# rule:[sign-up-genius]
+if allof (header :contains "From" "signupgenius.com")
+{
+  fileinto "vendors.sign-up-genius";
+  stop;
+}
+# rule:[23-and-me]
+if allof (header :contains "From" "23andme.com")
+{
+  fileinto "vendors.23-and-me";
+  stop;
+}
+# rule:[matterhackers]
+if allof (header :contains "From" "matterhackers.com")
+{
+  fileinto "vendors.matterhackers";
+  stop;
+}
+# rule:[the-broad]
+if allof (header :contains "From" "thebroad.org")
+{
+  fileinto "vendors.the-broad";
+  stop;
+}
+# rule:[google]
+if allof (header :contains "From" "accounts.google.com")
+{
+  fileinto "vendors.google";
+  stop;
+}
+# rule:[instacart]
+if allof (header :contains "From" "instacart.com")
+{
+  fileinto "vendors.instacart";
+  stop;
+}
+# rule:[glassdoor]
+if allof (header :contains "From" "mail.glassdoor.com")
+{
+  fileinto "vendors.glassdoor";
+  stop;
+}
+# rule:[cinespia]
+if allof (header :contains "From" "cinespia.org")
+{
+  fileinto "vendors.cinespia";
+  stop;
+}
+# rule:[dwp]
+if allof (header :contains "From" "ladwp.com")
+{
+  fileinto "vendors.dwp";
+  stop;
+}
+# rule:[paypal]
+if anyof (header :contains "From" "paypal.com", header :contains "From" "mail.paypal.com")
+{
+  fileinto "vendors.paypal";
+  stop;
+}
+# rule:[trissy]
+if allof (header :contains "From" "trisbickmanmd@gmail.com")
+{
+  fileinto "people.trissy";
+  stop;
+}
+# rule:[mugsy]
+if allof (header :contains "From" "mugsyclicks.com")
+{
+  fileinto "vendors.mugsy";
+  stop;
+}
+# rule:[la-times]
+if allof (header :contains "From" "email.latimes.com")
+{
+  fileinto "vendors.la-times";
+  stop;
+}
+# rule:[springer]
+if allof (header :contains "From" "newsletter.springer.com")
+{
+  fileinto "vendors.springer";
+  stop;
+}
+# rule:[nissan]
+if allof (header :contains "From" "nissanfinance.com")
+{
+  fileinto "vendors.nissan";
+  stop;
+}
+
+# rule:[team-touchstone]
+if anyof (
+  header :contains "From" "dlgainor@mac.com",
+  header :contains "From" "teamtouchstonehb@gmail.com",
+  header :contains "From" "CBender@good-fear.com",
+  header :contains "From" "wrightaway93@gmail.com",
+  header :contains "From" "andresmvidaurre@gmail.com",
+  header :contains "From" "ellenpicataggio@gmail.com",
+  header :contains "From" "kdbender@me.com",
+  header :contains "From" "irad@eyal.net",
+  header :contains "From" "iradeyal@gmail.com"
+  )
+{
+  fileinto "people.team-touchstone";
+  stop;
+}
+
+# rule:[cedars-sinai]
+if allof (header :contains "From" "MyCSLinkAlerts@mycslink.org")
+{
+  fileinto "vendors.cedars-sinai";
+  stop;
+}
