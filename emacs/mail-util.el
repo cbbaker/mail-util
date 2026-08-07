@@ -86,6 +86,12 @@ the Maildir offline. A real apply reads this from the plan."
 Nil deploys into the account's active script (or \"mail-util\" if none)."
   :type '(choice (const :tag "Active script" nil) string))
 
+(defcustom mail-util-sieve-auto-merge t
+  "When non-nil, building a plan fetches the server's Sieve script and shows the
+merged result automatically (when `mail-util-imap-host' is set), so the plan
+always reflects what would actually be deployed. Set nil to fetch only on `e'."
+  :type 'boolean)
+
 ;;;; Faces
 
 (defface mail-util-approved '((t :inherit success))
@@ -466,7 +472,11 @@ mover instead, so you can pick imap/local without touching the variable."
           mail-util--plan-existing-sieve nil
           mail-util--plan-merged-script nil)
     (mail-util--render-plan)
-    (pop-to-buffer (current-buffer))))
+    (pop-to-buffer (current-buffer))
+    ;; By default, immediately fetch the server's Sieve and show the merged result, so
+    ;; the plan reflects what would actually be deployed (never just the new rules).
+    (when (and mail-util-sieve-auto-merge mail-util-imap-host)
+      (mail-util--fetch-merged-sieve (current-buffer) nil))))
 
 (defun mail-util--render-plan ()
   "Render the current plan buffer. Shows the server-merged Sieve if it has been
@@ -554,45 +564,52 @@ fetched (via `mail-util-preview-sieve'), otherwise the generated block."
           (when mail-util-sieve-script (list "--script-name" mail-util-sieve-script))
           (when deploy (list "--deploy"))))
 
+(defun mail-util--fetch-merged-sieve (planbuf show-compare)
+  "Fetch the server Sieve for the plan in PLANBUF and update its merged view.
+Read-only (uploads nothing). If SHOW-COMPARE is non-nil, also pop
+`*mail-util-sieve*' with the existing vs. merged scripts side by side. Fails
+gracefully — on any error the plan keeps showing the generated block."
+  (when (and (buffer-live-p planbuf) mail-util-imap-host)
+    (let* ((json (buffer-local-value 'mail-util--plan-json planbuf))
+           (file (make-temp-file "mail-util-plan" nil ".json"))
+           (args (append (list "sieve" "--plan" file) (mail-util--sieve-args nil))))
+      (with-temp-file file (insert json))
+      (message "mail-util: fetching server Sieve from %s …" mail-util-imap-host)
+      (mail-util--run-json
+       args
+       (lambda (res)
+         (ignore-errors (delete-file file))
+         (let ((existing (alist-get 'existing res))
+               (merged (alist-get 'merged res))
+               (script (alist-get 'script res)))
+           (when (buffer-live-p planbuf)
+             (with-current-buffer planbuf
+               (setq mail-util--plan-existing-sieve existing
+                     mail-util--plan-merged-sieve merged
+                     mail-util--plan-merged-script script)
+               (let ((inhibit-read-only t)) (mail-util--render-plan))))
+           (when show-compare
+             (with-current-buffer (get-buffer-create "*mail-util-sieve*")
+               (let ((inhibit-read-only t))
+                 (erase-buffer)
+                 (insert (format "═══ Existing server script: %s ═══\n\n" script))
+                 (insert (if (and existing (> (length existing) 0)) existing "(no script on the server yet)\n"))
+                 (insert "\n\n═══ Merged — what D would deploy ═══\n\n")
+                 (insert (or merged ""))
+                 (goto-char (point-min)))
+               (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
+               (view-mode 1))
+             (display-buffer "*mail-util-sieve*"))
+           (message "Server Sieve merged into the plan (script %s)" script)))))))
+
 (defun mail-util-preview-sieve ()
   "Fetch the server's Sieve script and preview the merged result (read-only).
-Updates this plan buffer's Sieve section to the merged script and opens
-`*mail-util-sieve*' showing your current server script and the merged result.
-Uploads nothing."
+Updates this plan buffer's Sieve section and opens `*mail-util-sieve*' showing
+your current server script vs. the merged result. Uploads nothing."
   (interactive)
   (unless mail-util--plan-json (user-error "No plan in this buffer"))
   (unless mail-util-imap-host (user-error "Set `mail-util-imap-host' first"))
-  (let* ((file (make-temp-file "mail-util-plan" nil ".json"))
-         (json mail-util--plan-json)
-         (planbuf (current-buffer))
-         (args (append (list "sieve" "--plan" file) (mail-util--sieve-args nil))))
-    (with-temp-file file (insert json))
-    (message "mail-util: fetching server Sieve from %s …" mail-util-imap-host)
-    (mail-util--run-json
-     args
-     (lambda (res)
-       (ignore-errors (delete-file file))
-       (let ((existing (alist-get 'existing res))
-             (merged (alist-get 'merged res))
-             (script (alist-get 'script res)))
-         (when (buffer-live-p planbuf)
-           (with-current-buffer planbuf
-             (setq mail-util--plan-existing-sieve existing
-                   mail-util--plan-merged-sieve merged
-                   mail-util--plan-merged-script script)
-             (let ((inhibit-read-only t)) (mail-util--render-plan))))
-         (with-current-buffer (get-buffer-create "*mail-util-sieve*")
-           (let ((inhibit-read-only t))
-             (erase-buffer)
-             (insert (format "═══ Existing server script: %s ═══\n\n" script))
-             (insert (if (and existing (> (length existing) 0)) existing "(no script on the server yet)\n"))
-             (insert "\n\n═══ Merged — what D would deploy ═══\n\n")
-             (insert (or merged ""))
-             (goto-char (point-min)))
-           (when (fboundp 'sieve-mode) (ignore-errors (sieve-mode)))
-           (view-mode 1))
-         (display-buffer "*mail-util-sieve*")
-         (message "Fetched server Sieve (script %s); plan now shows the merged result" script))))))
+  (mail-util--fetch-merged-sieve (current-buffer) t))
 
 (defun mail-util-view-existing-sieve ()
   "Show the server's current Sieve script (fetched by a prior preview)."

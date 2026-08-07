@@ -148,9 +148,13 @@ Sieve script. There:
 | `s` | save the plan JSON to a file |
 | `q` | quit |
 
-The plan's Sieve section starts as the *generated* rule block. Press `e` to fetch your
-live server script and merge — the section updates to show exactly what `D` would upload,
-with your hand-written rules preserved (only the delimited `mail-util` block changes).
+When `mail-util-imap-host` is set, building a plan **automatically** fetches your live
+server script and shows the Sieve section as the *merged* result — exactly what `D` would
+upload — so you never see just the new rules in isolation. (`e` re-fetches on demand and
+opens the side-by-side comparison; set `mail-util-sieve-auto-merge` to nil to fetch only
+on `e`.) Merging **accumulates**: previously-deployed rules are kept, the new ones are
+added, and your hand-written rules outside the markers are never touched — deploying never
+overwrites.
 
 `d` runs `apply --dry-run` (moves nothing). `X` runs the real apply: it asks
 `REALLY move N messages on <host>?`, then moves them server-side via IMAP and reconciles
