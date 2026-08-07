@@ -101,5 +101,6 @@ Planned: `namemap`, `sieve`, `mover`, `journal`, and an Emacs front-end.
 4. **M4 — server-side IMAP mover (default) + mbsync reconcile (done):** `imapmover`
    crate (`ImapOps` trait + `ImapMover` + `FakeImapOps`, real `imap` backend, `.netrc`
    auth), `probe` command, real `apply` with UIDVALIDITY-stability check.
-5. **M5 — offline local mover.**
+5. **M5 — offline local mover (done):** `localmover` crate (fresh `,U=`-less names,
+   copy-verify-then-delete, idempotent), wired to `apply --mover local`.
 6. **M6 — Emacs review UI + ManageSieve deployment + LLM labeling.**
